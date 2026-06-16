@@ -1,0 +1,321 @@
+{
+  "embed_tokens.weight": {
+    "c_name": "embed_tokens_weight",
+    "offset": 0,
+    "size_bytes": 131072,
+    "numel": 32768,
+    "shape": [
+      512,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.causal_mask": {
+    "c_name": "layers_0_attention_causal_mask",
+    "offset": 131072,
+    "size_bytes": 4096,
+    "numel": 1024,
+    "shape": [
+      32,
+      32
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.k_proj.weight": {
+    "c_name": "layers_0_attention_k_proj_weight",
+    "offset": 135168,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.o_proj.weight": {
+    "c_name": "layers_0_attention_o_proj_weight",
+    "offset": 151552,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.q_proj.weight": {
+    "c_name": "layers_0_attention_q_proj_weight",
+    "offset": 167936,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.rope.cos_cached": {
+    "c_name": "layers_0_attention_rope_cos_cached",
+    "offset": 184320,
+    "size_bytes": 1024,
+    "numel": 256,
+    "shape": [
+      32,
+      8
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.rope.sin_cached": {
+    "c_name": "layers_0_attention_rope_sin_cached",
+    "offset": 185344,
+    "size_bytes": 1024,
+    "numel": 256,
+    "shape": [
+      32,
+      8
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attention.v_proj.weight": {
+    "c_name": "layers_0_attention_v_proj_weight",
+    "offset": 186368,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.attn_norm.weight": {
+    "c_name": "layers_0_attn_norm_weight",
+    "offset": 202752,
+    "size_bytes": 256,
+    "numel": 64,
+    "shape": [
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.mlp.down_proj.weight": {
+    "c_name": "layers_0_mlp_down_proj_weight",
+    "offset": 203008,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      64,
+      128
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.mlp.gate_proj.weight": {
+    "c_name": "layers_0_mlp_gate_proj_weight",
+    "offset": 235776,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      128,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.mlp.up_proj.weight": {
+    "c_name": "layers_0_mlp_up_proj_weight",
+    "offset": 268544,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      128,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.0.mlp_norm.weight": {
+    "c_name": "layers_0_mlp_norm_weight",
+    "offset": 301312,
+    "size_bytes": 256,
+    "numel": 64,
+    "shape": [
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.causal_mask": {
+    "c_name": "layers_1_attention_causal_mask",
+    "offset": 301568,
+    "size_bytes": 4096,
+    "numel": 1024,
+    "shape": [
+      32,
+      32
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.k_proj.weight": {
+    "c_name": "layers_1_attention_k_proj_weight",
+    "offset": 305664,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.o_proj.weight": {
+    "c_name": "layers_1_attention_o_proj_weight",
+    "offset": 322048,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.q_proj.weight": {
+    "c_name": "layers_1_attention_q_proj_weight",
+    "offset": 338432,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.rope.cos_cached": {
+    "c_name": "layers_1_attention_rope_cos_cached",
+    "offset": 354816,
+    "size_bytes": 1024,
+    "numel": 256,
+    "shape": [
+      32,
+      8
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.rope.sin_cached": {
+    "c_name": "layers_1_attention_rope_sin_cached",
+    "offset": 355840,
+    "size_bytes": 1024,
+    "numel": 256,
+    "shape": [
+      32,
+      8
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attention.v_proj.weight": {
+    "c_name": "layers_1_attention_v_proj_weight",
+    "offset": 356864,
+    "size_bytes": 16384,
+    "numel": 4096,
+    "shape": [
+      64,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.attn_norm.weight": {
+    "c_name": "layers_1_attn_norm_weight",
+    "offset": 373248,
+    "size_bytes": 256,
+    "numel": 64,
+    "shape": [
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.mlp.down_proj.weight": {
+    "c_name": "layers_1_mlp_down_proj_weight",
+    "offset": 373504,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      64,
+      128
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.mlp.gate_proj.weight": {
+    "c_name": "layers_1_mlp_gate_proj_weight",
+    "offset": 406272,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      128,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.mlp.up_proj.weight": {
+    "c_name": "layers_1_mlp_up_proj_weight",
+    "offset": 439040,
+    "size_bytes": 32768,
+    "numel": 8192,
+    "shape": [
+      128,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "layers.1.mlp_norm.weight": {
+    "c_name": "layers_1_mlp_norm_weight",
+    "offset": 471808,
+    "size_bytes": 256,
+    "numel": 64,
+    "shape": [
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "lm_head.weight": {
+    "c_name": "lm_head_weight",
+    "offset": 472064,
+    "size_bytes": 131072,
+    "numel": 32768,
+    "shape": [
+      512,
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  },
+  "norm.weight": {
+    "c_name": "norm_weight",
+    "offset": 603136,
+    "size_bytes": 256,
+    "numel": 64,
+    "shape": [
+      64
+    ],
+    "c_type": "float",
+    "precision": "f32"
+  }
+}

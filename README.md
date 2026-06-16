@@ -33,6 +33,49 @@ A multi-agent LangGraph system that converts PyTorch models into optimized bare-
 python main.py --demo --optimize
 ```
 
+### Energy Estimation (standalone)
+
+After generated code is verified and compiled to a RISC-V ELF, estimate runtime and energy:
+
+```bash
+export FREQUENCY_HZ=100000000
+export ASSUMED_CPI=1.5
+export OPENROAD_POWER_WATTS=0.120
+
+# Compile model.c to ELF (requires riscv64-unknown-elf-gcc)
+python -c "
+from tools.compile import compile_model_elf
+ok, out, elf = compile_model_elf('output/model.c', 'output')
+print('ELF:', elf, 'OK:', ok)
+"
+
+# Analyze ELF + loops in model.c
+python tools/estimate_energy.py \
+  --elf output/model.elf \
+  --source output/model.c \
+  --report output/energy_report.md
+```
+
+Optional toolchain overrides:
+
+```bash
+export RISCV_GCC=riscv64-unknown-elf-gcc
+export RISCV_OBJDUMP=riscv64-unknown-elf-objdump
+```
+
+The energy estimation step runs automatically in the pipeline after human approval:
+
+```
+verify → human review → estimate_energy → report
+```
+
+The original Hazard3 simulation and OpenROAD synthesis path is preserved in
+`state.py` behind `ENABLE_HARDWARE_PIPELINE = False`. Set it to `True` to restore:
+
+```
+verify → human review → estimate_energy → simulate → synthesize → report
+```
+
 ### Visualizing the IR Graph
 The tool generates a Custom IR from your PyTorch model. You can visualize it in various formats:
 
@@ -58,7 +101,13 @@ python visualize_ir.py output/ir_graph.json --format html --output output/ir_gra
    a `model.h` contract, then asks the LLM to implement `model.c`.
 3. `verify_code`: Compilation checks (loops back to generation if failed).
 4. **Human Review**: System pauses. User approves or rejects.
-5. `simulate`: Run binary on Hazard3.
-6. `synthesize`: Run OpenROAD for area/power.
-7. `optimize`: (Optional) Analyze metrics and loop back to generation.
-8. `report`: Generate `report.md`.
+5. `estimate_energy`: Compile to RISC-V ELF, count instructions, estimate energy.
+6. `report`: Generate `report.md`.
+
+When `ENABLE_HARDWARE_PIPELINE` is set to `True` in `state.py`, steps 6–8 below
+also run after energy estimation:
+
+6. `simulate`: Run binary on Hazard3.
+7. `synthesize`: Run OpenROAD for area/power.
+8. `optimize`: (Optional) Analyze metrics and loop back to generation.
+9. `report`: Generate `report.md`.

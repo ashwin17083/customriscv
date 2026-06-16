@@ -83,6 +83,16 @@ def find_compiler(prefer_riscv: bool = True) -> Optional[str]:
     Returns:
         Path to compiler executable, or None if not found.
     """
+    env_gcc = os.environ.get("RISCV_GCC", "")
+    if prefer_riscv and env_gcc:
+        env_path = shutil.which(env_gcc)
+        if env_path:
+            logger.info(f"Using RISCV_GCC from environment: {env_gcc}")
+            return env_gcc
+        if os.path.isfile(env_gcc) and os.access(env_gcc, os.X_OK):
+            logger.info(f"Using RISCV_GCC from environment: {env_gcc}")
+            return env_gcc
+
     search_order = (
         RISCV_COMPILERS + HOST_COMPILERS
         if prefer_riscv
@@ -218,12 +228,22 @@ def compile_to_object(
     return _run_compiler(compiler, args)
 
 
+def write_startup_c(output_dir: str) -> str:
+    """Write persistent bare-metal startup.c and return its path."""
+    os.makedirs(output_dir, exist_ok=True)
+    startup_path = os.path.join(output_dir, "startup.c")
+    with open(startup_path, "w", encoding="utf-8") as f:
+        f.write(STARTUP_CODE)
+    return startup_path
+
+
 def compile_to_elf(
     source_path: str,
     output_path: str = "",
     include_dir: str = "",
     linker_script: str = "",
     compiler: Optional[str] = None,
+    startup_path: str = "",
 ) -> tuple[bool, str]:
     """
     Compile and link C source to RISC-V ELF binary.
@@ -236,6 +256,7 @@ def compile_to_elf(
         include_dir: Directory containing header files.
         linker_script: Optional linker script path.
         compiler: Specific compiler to use.
+        startup_path: Optional path to startup.c (written if missing).
 
     Returns:
         (success, output) tuple.
@@ -245,15 +266,14 @@ def compile_to_elf(
         if compiler is None:
             return False, "No RISC-V compiler available for ELF generation"
 
+    output_dir = os.path.dirname(source_path) or "output"
     if not output_path:
-        output_path = source_path.replace(".c", ".elf")
+        output_path = os.path.join(output_dir, "model.elf")
 
-    # Write startup code to a temporary file
-    startup_path = os.path.join(
-        os.path.dirname(source_path), "_startup.c"
-    )
-    with open(startup_path, "w", encoding="utf-8") as f:
-        f.write(STARTUP_CODE)
+    if not startup_path:
+        startup_path = write_startup_c(output_dir)
+    elif not os.path.isfile(startup_path):
+        write_startup_c(output_dir)
 
     args = []
 
@@ -276,12 +296,40 @@ def compile_to_elf(
         "-lm",
     ])
 
-    success, output = _run_compiler(compiler, args)
+    return _run_compiler(compiler, args)
 
-    # Clean up startup file
-    try:
-        os.remove(startup_path)
-    except OSError:
-        pass
 
-    return success, output
+def compile_model_elf(
+    model_c_path: str,
+    output_dir: str = "output",
+    compiler: Optional[str] = None,
+) -> tuple[bool, str, str]:
+    """
+    Compile model.c + startup.c into output/model.elf per project plan.
+
+    Returns:
+        (success, compiler_output, elf_path)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    startup_path = write_startup_c(output_dir)
+    elf_path = os.path.join(output_dir, "model.elf")
+
+    if compiler is None:
+        compiler = find_compiler(prefer_riscv=True)
+    if compiler is None:
+        return False, "No RISC-V compiler available for ELF generation", elf_path
+    if not _is_riscv_compiler(compiler):
+        return (
+            False,
+            f"Refusing to create energy-analysis ELF with non-RISC-V compiler: {compiler}",
+            elf_path,
+        )
+
+    success, output = compile_to_elf(
+        source_path=model_c_path,
+        output_path=elf_path,
+        include_dir=output_dir,
+        compiler=compiler,
+        startup_path=startup_path,
+    )
+    return success, output, elf_path

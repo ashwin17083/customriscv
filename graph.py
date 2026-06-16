@@ -14,17 +14,23 @@ from typing import Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from state import AgentState
+from state import AgentState, ENABLE_HARDWARE_PIPELINE
 from agents.fx_parser import parse_fx_graph
 from agents.code_generator import generate_code
 from agents.verifier import verify_code
 from agents.human_review import human_review
+from agents.energy_estimator import estimate_energy_node
 from agents.simulator import simulate
 from agents.synthesis import synthesize
 from agents.optimizer import optimize
 from agents.report import generate_report
 
 logger = logging.getLogger(__name__)
+
+
+def _hardware_pipeline_enabled(state: AgentState) -> bool:
+    """Return True when the original Hazard3/OpenROAD pipeline should run."""
+    return state.get("enable_hardware_pipeline", ENABLE_HARDWARE_PIPELINE)
 
 # ── Routing Functions ───────────────────────────────────────────
 
@@ -46,13 +52,13 @@ def route_after_verification(state: AgentState) -> Literal["human_review", "gene
     return "generate_code"
 
 
-def route_after_human_review(state: AgentState) -> Literal["simulate", "generate_code", "verify", "report"]:
+def route_after_human_review(state: AgentState) -> Literal["estimate_energy", "generate_code", "verify", "report"]:
     """Decide where to go after human review."""
     action = state.get("human_action", "")
     
     if action == "approve" or state.get("human_approved", False):
-        logger.info("Routing: Human approved -> Simulate")
-        return "simulate"
+        logger.info("Routing: Human approved -> Energy Estimation")
+        return "estimate_energy"
     elif action == "verify":
         logger.info("Routing: Human requested re-verification -> Verify")
         state["verification_attempts"] = 0
@@ -66,8 +72,25 @@ def route_after_human_review(state: AgentState) -> Literal["simulate", "generate
     return "generate_code"
 
 
+def route_after_energy_estimation(
+    state: AgentState,
+) -> Literal["simulate", "report"]:
+    """After energy estimation, optionally continue to hardware pipeline."""
+    if _hardware_pipeline_enabled(state):
+        logger.info("Routing: Hardware pipeline enabled -> Hazard3 Simulation")
+        return "simulate"
+    logger.info(
+        "Routing: Hardware pipeline disabled -> Report "
+        "(skipping Hazard3 simulation and OpenROAD synthesis)"
+    )
+    return "report"
+
+
 def route_after_synthesis(state: AgentState) -> Literal["optimize", "report"]:
-    """Decide whether to run the optimization loop."""
+    """Decide whether to run the optimization loop (hardware pipeline only)."""
+    if not _hardware_pipeline_enabled(state):
+        return "report"
+
     enable_opt = state.get("enable_optimization", False)
     iteration = state.get("optimization_iteration", 0)
     
@@ -95,10 +118,13 @@ def build_graph(entry_point: str = "parse_fx"):
     workflow.add_node("generate_code", generate_code)
     workflow.add_node("verify", verify_code)
     workflow.add_node("human_review", human_review)
+    workflow.add_node("estimate_energy", estimate_energy_node)
+    workflow.add_node("report", generate_report)
+
+    # Original Hazard3 + OpenROAD pipeline (disabled for now).
     workflow.add_node("simulate", simulate)
     workflow.add_node("synthesize", synthesize)
     workflow.add_node("optimize", optimize)
-    workflow.add_node("report", generate_report)
     
     # Set Entry Point
     workflow.set_entry_point(entry_point)
@@ -123,26 +149,30 @@ def build_graph(entry_point: str = "parse_fx"):
         "human_review",
         route_after_human_review,
         {
-            "simulate": "simulate",
+            "estimate_energy": "estimate_energy",
             "generate_code": "generate_code",
             "verify": "verify",
             "report": "report" # Fallback
         }
     )
     
+    workflow.add_conditional_edges(
+        "estimate_energy",
+        route_after_energy_estimation,
+        {
+            "simulate": "simulate",
+            "report": "report",
+        },
+    )
     workflow.add_edge("simulate", "synthesize")
-    
-    # Conditional edge after synthesis
     workflow.add_conditional_edges(
         "synthesize",
         route_after_synthesis,
         {
             "optimize": "optimize",
-            "report": "report"
-        }
+            "report": "report",
+        },
     )
-    
-    # Edge from optimize loops back to generate_code
     workflow.add_edge("optimize", "generate_code")
     
     workflow.add_edge("report", END)

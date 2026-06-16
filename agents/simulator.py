@@ -36,16 +36,20 @@ def simulate(state: AgentState) -> dict:
     logger.info("HAZARD3 RISC-V SIMULATION")
     logger.info("=" * 60)
 
-    # ── Step 1: Cross-compile to RISC-V ELF ─────────────────────
+    # ── Step 1: Use existing ELF or cross-compile ───────────────
     output_dir = os.path.dirname(code_path) if code_path else "output"
-    elf_path = os.path.join(output_dir, "firmware.elf")
+    elf_path = state.get("elf_path") or os.path.join(output_dir, "model.elf")
 
-    logger.info("Step 1: Cross-compiling to RISC-V ELF...")
-    compile_ok, compile_output = compile_to_elf(
-        source_path=code_path,
-        output_path=elf_path,
-        include_dir=os.path.dirname(header_path) if header_path else output_dir,
-    )
+    if os.path.isfile(elf_path):
+        logger.info(f"Step 1: Using existing ELF: {elf_path}")
+        compile_ok, compile_output = True, ""
+    else:
+        logger.info("Step 1: Cross-compiling to RISC-V ELF...")
+        compile_ok, compile_output = compile_to_elf(
+            source_path=code_path,
+            output_path=elf_path,
+            include_dir=os.path.dirname(header_path) if header_path else output_dir,
+        )
 
     if not compile_ok:
         logger.error(f"Cross-compilation failed: {compile_output}")

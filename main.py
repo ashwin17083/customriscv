@@ -98,6 +98,7 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         "enable_optimization": config.get("optimize", False),
         "weight_precision": config.get("precision", "f32"),
         "weight_mode": config.get("weight_mode", "embedded"),
+        "enable_hardware_pipeline": config.get("hardware_pipeline", False),
         "verification_attempts": 0,
         "optimization_iteration": 0,
         "human_approved": False,
@@ -115,6 +116,9 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         if (out_dir / "model.c").exists():
             initial_state["generated_code"] = (out_dir / "model.c").read_text()
             initial_state["code_path"] = str(out_dir / "model.c")
+        if (out_dir / "model.h").exists():
+            initial_state["generated_model_header"] = (out_dir / "model.h").read_text()
+            initial_state["model_header_path"] = str(out_dir / "model.h")
         if (out_dir / "weights.h").exists():
             initial_state["generated_header"] = (out_dir / "weights.h").read_text()
             initial_state["header_path"] = str(out_dir / "weights.h")
@@ -142,16 +146,12 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         initial_state["weights_path"] = str(out_dir / "weights.npz")
         initial_state["weights_bin_path"] = str(out_dir / "weights.bin")
 
-        if not initial_state.get("weights_metadata") and model is not None:
-            state_dict = model.state_dict()
-            weights_metadata = {}
-            for param_name, param_tensor in state_dict.items():
-                weights_metadata[param_name] = {
-                    "shape": list(param_tensor.shape),
-                    "dtype": str(param_tensor.dtype).replace("torch.", ""),
-                    "numel": param_tensor.numel(),
-                }
-            initial_state["weights_metadata"] = weights_metadata
+        if start_from in ("estimate_energy", "simulate", "synthesize"):
+            initial_state["human_approved"] = True
+            initial_state["human_action"] = "approve"
+            initial_state["verification_result"] = {"passed": True}
+        if (out_dir / "model.elf").exists():
+            initial_state["elf_path"] = str(out_dir / "model.elf")
 
     # 4. Build Graph
     app = build_graph(entry_point=start_from)
@@ -251,8 +251,13 @@ def main():
     )
     parser.add_argument(
         "--start-from", type=str, default="parse_fx",
-        choices=["parse_fx", "generate_code", "verify", "simulate", "synthesize"],
+        choices=["parse_fx", "generate_code", "verify", "estimate_energy", "simulate", "synthesize"],
         help="Start pipeline from a specific stage"
+    )
+    parser.add_argument(
+        "--hardware-pipeline",
+        action="store_true",
+        help="Continue after energy estimation into Hazard3/OpenROAD stages",
     )
     
     args = parser.parse_args()
@@ -266,6 +271,7 @@ def main():
             "precision": args.precision,
             "weight_mode": args.weight_mode,
             "start_from": args.start_from,
+            "hardware_pipeline": args.hardware_pipeline,
         }
         run_pipeline(model, sample_input, config)
         
@@ -283,6 +289,7 @@ def main():
                 "precision": args.precision,
                 "weight_mode": args.weight_mode,
                 "start_from": args.start_from,
+                "hardware_pipeline": args.hardware_pipeline,
             }
             run_pipeline(model, sample_input, config)
         except Exception as e:

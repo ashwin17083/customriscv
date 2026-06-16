@@ -1,0 +1,514 @@
+{
+  "model_name": "tiny_llama_demo",
+  "nodes": [
+    {
+      "id": "input_ids",
+      "op": "TENSOR_INPUT",
+      "inputs": [],
+      "params": {},
+      "shape": [
+        1,
+        32
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "embed_tokens",
+      "op": "EMBEDDING",
+      "inputs": [
+        "input_ids"
+      ],
+      "params": {
+        "num_embeddings": 512,
+        "embedding_dim": 64
+      },
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "embed_tokens.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_0_attn_norm",
+      "op": "RMSNORM",
+      "inputs": [
+        "embed_tokens"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "layers.0.attn_norm.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_0_attention",
+      "op": "ATTENTION",
+      "inputs": [
+        "layers_0_attn_norm"
+      ],
+      "params": {
+        "num_heads": 4,
+        "head_dim": 16,
+        "q_proj_weight": "layers.0.attention.q_proj.weight",
+        "k_proj_weight": "layers.0.attention.k_proj.weight",
+        "v_proj_weight": "layers.0.attention.v_proj.weight",
+        "o_proj_weight": "layers.0.attention.o_proj.weight"
+      },
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "add",
+      "op": "ADD",
+      "inputs": [
+        "embed_tokens",
+        "layers_0_attention"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_0_mlp_norm",
+      "op": "RMSNORM",
+      "inputs": [
+        "add"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "layers.0.mlp_norm.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_0_mlp",
+      "op": "SWIGLU",
+      "inputs": [
+        "layers_0_mlp_norm"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "add_1",
+      "op": "ADD",
+      "inputs": [
+        "add",
+        "layers_0_mlp"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_1_attn_norm",
+      "op": "RMSNORM",
+      "inputs": [
+        "add_1"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "layers.1.attn_norm.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_1_attention",
+      "op": "ATTENTION",
+      "inputs": [
+        "layers_1_attn_norm"
+      ],
+      "params": {
+        "num_heads": 4,
+        "head_dim": 16,
+        "q_proj_weight": "layers.1.attention.q_proj.weight",
+        "k_proj_weight": "layers.1.attention.k_proj.weight",
+        "v_proj_weight": "layers.1.attention.v_proj.weight",
+        "o_proj_weight": "layers.1.attention.o_proj.weight"
+      },
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "add_2",
+      "op": "ADD",
+      "inputs": [
+        "add_1",
+        "layers_1_attention"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_1_mlp_norm",
+      "op": "RMSNORM",
+      "inputs": [
+        "add_2"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "layers.1.mlp_norm.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "layers_1_mlp",
+      "op": "SWIGLU",
+      "inputs": [
+        "layers_1_mlp_norm"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "add_3",
+      "op": "ADD",
+      "inputs": [
+        "add_2",
+        "layers_1_mlp"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    },
+    {
+      "id": "norm",
+      "op": "RMSNORM",
+      "inputs": [
+        "add_3"
+      ],
+      "params": {},
+      "shape": [
+        1,
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "weight_key": "norm.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "lm_head",
+      "op": "LINEAR",
+      "inputs": [
+        "norm"
+      ],
+      "params": {
+        "in_features": 64,
+        "out_features": 512,
+        "bias": false
+      },
+      "shape": [
+        1,
+        32,
+        512
+      ],
+      "dtype": "float32",
+      "weight_key": "lm_head.weight",
+      "bias_key": ""
+    },
+    {
+      "id": "output",
+      "op": "TENSOR_OUTPUT",
+      "inputs": [
+        "lm_head"
+      ],
+      "params": {},
+      "shape": [],
+      "dtype": "float32",
+      "weight_key": "",
+      "bias_key": ""
+    }
+  ],
+  "input_shapes": {
+    "input_ids": [
+      1,
+      32
+    ]
+  },
+  "weight_metadata": {
+    "embed_tokens.weight": {
+      "shape": [
+        512,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 32768
+    },
+    "layers.0.attn_norm.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "numel": 64
+    },
+    "layers.0.attention.causal_mask": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "numel": 1024
+    },
+    "layers.0.attention.q_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.0.attention.k_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.0.attention.v_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.0.attention.o_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.0.attention.rope.cos_cached": {
+      "shape": [
+        32,
+        8
+      ],
+      "dtype": "float32",
+      "numel": 256
+    },
+    "layers.0.attention.rope.sin_cached": {
+      "shape": [
+        32,
+        8
+      ],
+      "dtype": "float32",
+      "numel": 256
+    },
+    "layers.0.mlp_norm.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "numel": 64
+    },
+    "layers.0.mlp.gate_proj.weight": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "layers.0.mlp.up_proj.weight": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "layers.0.mlp.down_proj.weight": {
+      "shape": [
+        64,
+        128
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "layers.1.attn_norm.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "numel": 64
+    },
+    "layers.1.attention.causal_mask": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "numel": 1024
+    },
+    "layers.1.attention.q_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.1.attention.k_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.1.attention.v_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.1.attention.o_proj.weight": {
+      "shape": [
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 4096
+    },
+    "layers.1.attention.rope.cos_cached": {
+      "shape": [
+        32,
+        8
+      ],
+      "dtype": "float32",
+      "numel": 256
+    },
+    "layers.1.attention.rope.sin_cached": {
+      "shape": [
+        32,
+        8
+      ],
+      "dtype": "float32",
+      "numel": 256
+    },
+    "layers.1.mlp_norm.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "numel": 64
+    },
+    "layers.1.mlp.gate_proj.weight": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "layers.1.mlp.up_proj.weight": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "layers.1.mlp.down_proj.weight": {
+      "shape": [
+        64,
+        128
+      ],
+      "dtype": "float32",
+      "numel": 8192
+    },
+    "norm.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "numel": 64
+    },
+    "lm_head.weight": {
+      "shape": [
+        512,
+        64
+      ],
+      "dtype": "float32",
+      "numel": 32768
+    }
+  }
+}

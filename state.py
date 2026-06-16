@@ -10,6 +10,11 @@ from typing import Any, Optional
 from typing_extensions import TypedDict
 
 
+# Temporary alternate: instruction-count energy estimation (active).
+# Original Hazard3 simulation + OpenROAD synthesis path (disabled for now).
+ENABLE_HARDWARE_PIPELINE = False
+
+
 class VerificationResult(TypedDict, total=False):
     """Structured result from the verification agent."""
     passed: bool
@@ -36,6 +41,25 @@ class SynthesisResult(TypedDict, total=False):
     frequency_mhz: float
     cell_count: int
     detailed_report: str
+
+
+class EnergyEstimationResult(TypedDict, total=False):
+    """Structured result from instruction-based energy estimation."""
+    success: bool
+    error: str
+    elf_path: str
+    source_path: str
+    report_path: str
+    disasm_path: str
+    static_instructions: int
+    estimated_dynamic_instructions: int
+    assumed_cpi: float
+    estimated_cycles: float
+    frequency_hz: float
+    runtime_seconds: float
+    openroad_power_watts: float
+    energy_joules: float
+    loop_count: int
 
 
 class AgentState(TypedDict, total=False):
@@ -89,6 +113,10 @@ class AgentState(TypedDict, total=False):
     # ── Simulation (Hazard3) ────────────────────────────────────
     simulation_result: SimulationResult
     reference_outputs: list[float]           # PyTorch reference output values
+    elf_path: str                            # Path to compiled model.elf
+
+    # ── Energy Estimation ───────────────────────────────────────
+    energy_estimation_result: EnergyEstimationResult
 
     # ── Synthesis (OpenROAD) ────────────────────────────────────
     synthesis_result: SynthesisResult
@@ -97,6 +125,7 @@ class AgentState(TypedDict, total=False):
     optimization_suggestions: list[str]      # List of optimization suggestions
     optimization_iteration: int              # Current iteration (max 3)
     enable_optimization: bool                # Toggle optimization loop
+    enable_hardware_pipeline: bool           # Hazard3 + OpenROAD (default off)
 
     # ── Final Report ────────────────────────────────────────────
     final_report: str                        # Markdown report
