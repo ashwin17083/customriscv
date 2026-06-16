@@ -104,8 +104,35 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         "human_feedback": "",
     }
     
+    start_from = config.get("start_from", "parse_fx")
+    
+    if start_from != "parse_fx":
+        import json
+        from pathlib import Path
+        out_dir = Path("output")
+        logger.info(f"Loading existing state from {out_dir} to start from {start_from}")
+        
+        if (out_dir / "model.c").exists():
+            initial_state["generated_code"] = (out_dir / "model.c").read_text()
+            initial_state["code_path"] = str(out_dir / "model.c")
+        if (out_dir / "weights.h").exists():
+            initial_state["generated_header"] = (out_dir / "weights.h").read_text()
+            initial_state["header_path"] = str(out_dir / "weights.h")
+        if (out_dir / "model_functions.h").exists():
+            initial_state["generated_functions_header"] = (out_dir / "model_functions.h").read_text()
+            initial_state["functions_header_path"] = str(out_dir / "model_functions.h")
+        if (out_dir / "ir_graph.json").exists():
+            with open(out_dir / "ir_graph.json", "r") as f:
+                initial_state["ir_graph"] = json.load(f)
+        if (out_dir / "weights_manifest.json").exists():
+            with open(out_dir / "weights_manifest.json", "r") as f:
+                initial_state["weights_manifest"] = json.load(f)
+        
+        initial_state["weights_path"] = str(out_dir / "weights.npz")
+        initial_state["weights_bin_path"] = str(out_dir / "weights.bin")
+
     # 4. Build Graph
-    app = build_graph()
+    app = build_graph(entry_point=start_from)
     
     # Configuration for the checkpointer (required for human-in-the-loop)
     thread_id = "agentic_riscv_run_01"
@@ -134,27 +161,34 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         print("\n" + "="*60)
         print("⏸️  PIPELINE PAUSED: HUMAN REVIEW REQUIRED")
         print("="*60)
-        print(f"Code generated successfully at: {current_state.get('code_path')}")
-        print("Please review the generated code.")
+        is_exhausted = current_state.get('verification_exhausted', False)
+        if is_exhausted:
+            print("\n⚠️  Max verification attempts reached! You must manually fix the code.")
+            print(f"Edit the code at: {current_state.get('code_path')}")
+            options_text = "Action [ (e)dit+verify, (r)etry generation, (a)pprove, (q)uit ]: "
+        else:
+            print(f"Code generated successfully at: {current_state.get('code_path')}")
+            print("Please review the generated code.")
+            options_text = "Action [ (a)pprove, (r)eject with feedback, (q)uit ]: "
         
         while True:
-            action = input("\nAction [ (a)pprove, (r)eject with feedback, (q)uit ]: ").strip().lower()
+            action = input(f"\n{options_text}").strip().lower()
             if action in ['a', 'approve']:
                 print("Code approved! Continuing to simulation...")
-                # Update state
-                app.update_state(
-                    run_config,
-                    {"human_approved": True, "human_feedback": ""}
-                )
+                app.update_state(run_config, {"human_approved": True, "human_action": "approve"})
                 break
-            elif action in ['r', 'reject']:
-                feedback = input("Enter feedback for the Code Generator: ").strip()
-                print("Code rejected. Routing back to generator...")
-                # Update state
-                app.update_state(
-                    run_config,
-                    {"human_approved": False, "human_feedback": feedback}
-                )
+            elif action in ['r', 'reject', 'retry']:
+                if is_exhausted:
+                    print("Resetting counters and retrying code generation...")
+                    app.update_state(run_config, {"human_approved": False, "human_action": "retry"})
+                else:
+                    feedback = input("Enter feedback for the Code Generator: ").strip()
+                    print("Code rejected. Routing back to generator...")
+                    app.update_state(run_config, {"human_approved": False, "human_feedback": feedback, "human_action": "retry"})
+                break
+            elif is_exhausted and action in ['e', 'edit']:
+                print("Proceeding to re-verify your manual edits...")
+                app.update_state(run_config, {"human_approved": False, "human_action": "verify"})
                 break
             elif action in ['q', 'quit']:
                 print("Exiting pipeline.")
@@ -193,6 +227,11 @@ def main():
         choices=["embedded", "binary"],
         help="Weight storage mode: embedded (bare-metal, default) or binary (hosted, uses fopen)"
     )
+    parser.add_argument(
+        "--start-from", type=str, default="parse_fx",
+        choices=["parse_fx", "generate_code", "verify", "simulate", "synthesize"],
+        help="Start pipeline from a specific stage"
+    )
     
     args = parser.parse_args()
     
@@ -204,6 +243,7 @@ def main():
             "optimize": args.optimize,
             "precision": args.precision,
             "weight_mode": args.weight_mode,
+            "start_from": args.start_from,
         }
         run_pipeline(model, sample_input, config)
         
@@ -220,6 +260,7 @@ def main():
                 "optimize": args.optimize,
                 "precision": args.precision,
                 "weight_mode": args.weight_mode,
+                "start_from": args.start_from,
             }
             run_pipeline(model, sample_input, config)
         except Exception as e:

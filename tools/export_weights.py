@@ -222,6 +222,17 @@ def export_weights_binary(
     return str(bin_path), manifest
 
 
+def _float_to_c_literal(val: float) -> str:
+    """Sanitize float values for C code, replacing inf/nan."""
+    if np.isnan(val):
+        return "0.0f"
+    if np.isposinf(val):
+        return "3.402823466e+38f" # FLT_MAX
+    if np.isneginf(val):
+        return "-3.402823466e+38f" # -FLT_MAX
+    return f"{val:.9e}f"
+
+
 def generate_weights_header(
     manifest: dict[str, dict],
     npz_path: str | Path,
@@ -340,7 +351,7 @@ def generate_weights_header(
             
             if precision == "f32":
                 # Embed as float array with full precision
-                values = ", ".join(f"{v:.9e}f" for v in arr)
+                values = ", ".join(_float_to_c_literal(v) for v in arr)
                 lines.append(
                     f"static const float {c_name}[{numel}] = {{{values}}};"
                 )

@@ -483,6 +483,14 @@ def parse_fx_graph(state: AgentState) -> dict:
     # ── Save weights to .npz file ───────────────────────────────
     output_dir = os.path.join(os.getcwd(), "output")
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Save IR graph to JSON for visualization
+    import json
+    ir_graph_path = os.path.join(output_dir, "ir_graph.json")
+    with open(ir_graph_path, "w") as f:
+        json.dump(ir_graph.to_dict(), f, indent=2)
+    logger.info(f"IR Graph saved to: {ir_graph_path}")
+
     weights_path = os.path.join(output_dir, "weights.npz")
 
     weight_arrays = {}

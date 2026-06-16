@@ -79,10 +79,12 @@ class AgentState(TypedDict, total=False):
     verification_result: VerificationResult
     verification_attempts: int               # Counter (max 5)
     verification_feedback: str               # Formatted feedback for LLM
+    verification_exhausted: bool             # True if max verification attempts reached
 
     # ── Human-in-the-loop ───────────────────────────────────────
     human_approved: bool                     # True if user approved
     human_feedback: str                      # Optional user comments
+    human_action: str                        # 'approve', 'retry', 'verify', 'quit'
 
     # ── Simulation (Hazard3) ────────────────────────────────────
     simulation_result: SimulationResult

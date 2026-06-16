@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "dummy")  # vLLM doesn't need real key
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
+VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "200000"))
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "codegen.txt"
 OUTPUT_DIR = Path(__file__).parent.parent / "output"
@@ -157,6 +158,15 @@ def _build_user_prompt(state: AgentState) -> str:
                 f"// shape={shape}, originally: {name}"
             )
 
+    # ── FUNCTION HEADER ─────────────────────────────────────────
+    functions_h = state.get("generated_functions_header", "")
+    if functions_h:
+        sections.append("")
+        sections.append("=" * 60)
+        sections.append("FUNCTION PROTOTYPES (from model_functions.h)")
+        sections.append("=" * 60)
+        sections.append(functions_h)
+
     # ── REPAIR MODE: Current Code + Errors ──────────────────────
     if is_retry:
         current_code = _read_generated_code_from_output(state)
@@ -244,6 +254,28 @@ def _build_user_prompt(state: AgentState) -> str:
             "Output exactly ONE ```c model.c code block."
         )
 
+    return "\n".join(sections)
+
+def _build_header_prompt(state: AgentState) -> str:
+    """Prompt for generating the model_functions.h header."""
+    ir_dict = state.get("ir_graph", {})
+    ir_graph = IRGraph.from_dict(ir_dict)
+    
+    sections = []
+    sections.append("=" * 60)
+    sections.append("IR GRAPH")
+    sections.append("=" * 60)
+    sections.append(ir_graph.pretty_print())
+    sections.append("")
+    sections.append("=" * 60)
+    sections.append("TASK")
+    sections.append("=" * 60)
+    sections.append(
+        "Generate a C header file named `model_functions.h` containing ONLY the function "
+        "prototypes (declarations) needed to implement this neural network on bare-metal RISC-V. "
+        "Include `void model_inference(const float* input, float* output);` "
+        "Do NOT implement the functions. Output exactly ONE ```c model_functions.h code block."
+    )
     return "\n".join(sections)
 
 
@@ -353,6 +385,16 @@ def _extract_c_artifact(response: str, filename: Literal["model.h", "model.c"]) 
     escaped = re.escape(filename)
     blocks = re.findall(
         rf"```(?:c|C)?\s*(?:{escaped})?\s*\n(.*?)```",
+        response,
+        re.DOTALL,
+    )
+    if blocks:
+        return max(blocks, key=len).strip()
+    return response.strip()
+
+def _extract_header_c(response: str) -> str:
+    blocks = re.findall(
+        r'```(?:c|C)?\s*(?:model_functions\.h)?\s*\n(.*?)```',
         response,
         re.DOTALL,
     )
@@ -514,14 +556,18 @@ def generate_code(state: AgentState) -> dict:
     model_c = _extract_c_artifact(raw_c_response, "model.c")
 
     # ── Write files ─────────────────────────────────────────────
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     code_path = OUTPUT_DIR / "model.c"
     model_header_path = OUTPUT_DIR / "model.h"
     header_path = OUTPUT_DIR / "weights.h"
+    funcs_path = OUTPUT_DIR / "model_functions.h"
 
     code_path.write_text(model_c, encoding="utf-8")
     model_header_path.write_text(model_h, encoding="utf-8")
     header_path.write_text(weights_h, encoding="utf-8")
+    funcs_path.write_text(functions_h, encoding="utf-8")
+    
+    # Save to persistent storage for retries
+    (OUTPUT_DIR / "_latest_model.c").write_text(model_c, encoding="utf-8")
 
     logger.info(f"Generated code written to: {code_path}")
     logger.info(f"Generated model header written to: {model_header_path}")
@@ -540,4 +586,5 @@ def generate_code(state: AgentState) -> dict:
         "code_path": str(code_path),
         "model_header_path": str(model_header_path),
         "header_path": str(header_path),
+        "functions_header_path": str(funcs_path),
     }

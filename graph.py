@@ -38,26 +38,31 @@ def route_after_verification(state: AgentState) -> Literal["human_review", "gene
         return "human_review"
     
     if attempts >= 5: # MAX_VERIFICATION_ATTEMPTS
-        logger.warning("Routing: Max verification attempts reached -> Report (Failed)")
-        state["error"] = "Max verification attempts reached without success."
-        return "report"
+        logger.warning("Routing: Max verification attempts reached -> Human Review")
+        state["verification_exhausted"] = True
+        return "human_review"
     
     logger.info("Routing: Verification failed -> Generate Code (Retry)")
     return "generate_code"
 
 
-def route_after_human_review(state: AgentState) -> Literal["simulate", "generate_code", "report"]:
+def route_after_human_review(state: AgentState) -> Literal["simulate", "generate_code", "verify", "report"]:
     """Decide where to go after human review."""
-    approved = state.get("human_approved", False)
+    action = state.get("human_action", "")
     
-    if approved:
+    if action == "approve" or state.get("human_approved", False):
         logger.info("Routing: Human approved -> Simulate")
         return "simulate"
+    elif action == "verify":
+        logger.info("Routing: Human requested re-verification -> Verify")
+        state["verification_attempts"] = 0
+        state["verification_exhausted"] = False
+        return "verify"
     
-    # If not approved, assume feedback was provided and we should regenerate
-    logger.info("Routing: Human rejected -> Generate Code")
+    logger.info("Routing: Human rejected/retry -> Generate Code")
     # Reset verification attempts so it can try again
     state["verification_attempts"] = 0
+    state["verification_exhausted"] = False
     return "generate_code"
 
 
@@ -79,7 +84,7 @@ def route_after_synthesis(state: AgentState) -> Literal["optimize", "report"]:
 
 # ── Graph Construction ──────────────────────────────────────────
 
-def build_graph():
+def build_graph(entry_point: str = "parse_fx"):
     """Build and compile the LangGraph workflow."""
     
     # Initialize StateGraph
@@ -96,7 +101,7 @@ def build_graph():
     workflow.add_node("report", generate_report)
     
     # Set Entry Point
-    workflow.set_entry_point("parse_fx")
+    workflow.set_entry_point(entry_point)
     
     # Add Edges
     workflow.add_edge("parse_fx", "generate_code")
@@ -120,6 +125,7 @@ def build_graph():
         {
             "simulate": "simulate",
             "generate_code": "generate_code",
+            "verify": "verify",
             "report": "report" # Fallback
         }
     )
