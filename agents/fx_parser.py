@@ -365,8 +365,32 @@ def parse_fx_graph(state: AgentState) -> dict:
                     ir_op = IROpType.SILU
                 elif "gelu" in name_lower:
                     ir_op = IROpType.RELU  # Approximate
-                elif "matmul" in name_lower or "bmm" in name_lower:
+                elif "embedding" in name_lower:
+                    ir_op = IROpType.EMBEDDING
+                elif "add" in name_lower:
+                    ir_op = IROpType.ADD
+                elif "sub" in name_lower:
+                    ir_op = IROpType.SUB
+                elif "mul" in name_lower:
+                    ir_op = IROpType.MUL
+                elif "div" in name_lower:
+                    ir_op = IROpType.DIV
+                elif "sqrt" in name_lower:
+                    ir_op = IROpType.SQRT
+                elif "mean" in name_lower:
+                    ir_op = IROpType.MEAN
+                elif "softmax" in name_lower:
+                    ir_op = IROpType.SOFTMAX
+                elif "permute" in name_lower or "transpose" in name_lower:
+                    ir_op = IROpType.TRANSPOSE
+                elif "view" in name_lower or "reshape" in name_lower or "unsqueeze" in name_lower or "slice" in name_lower:
+                    ir_op = IROpType.RESHAPE
+                elif "mm" in name_lower or "matmul" in name_lower or "bmm" in name_lower:
                     ir_op = IROpType.MATMUL
+                elif "cat" in name_lower:
+                    ir_op = IROpType.CONCAT
+                elif "split" in name_lower or "chunk" in name_lower:
+                    ir_op = IROpType.SPLIT
                 else:
                     logger.warning(f"Unsupported function: {target_name}")
                     continue

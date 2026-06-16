@@ -31,7 +31,11 @@ class IROpType(str, Enum):
     # ── Common Operations ───────────────────────────────────────
     LINEAR = "LINEAR"
     ADD = "ADD"
+    SUB = "SUB"
     MUL = "MUL"
+    DIV = "DIV"
+    SQRT = "SQRT"
+    MEAN = "MEAN"
     SOFTMAX = "SOFTMAX"
     DROPOUT = "DROPOUT"          # No-op in inference
 
@@ -71,6 +75,10 @@ OP_DEFAULT_PARAMS: dict[str, dict] = {
     IROpType.LAYERNORM: {"eps": 1e-5},
     IROpType.ROTARY_EMBEDDING: {"max_seq_len": 2048, "base": 10000.0},
     IROpType.SOFTMAX: {"dim": -1},
+    IROpType.SUB: {},
+    IROpType.DIV: {},
+    IROpType.SQRT: {},
+    IROpType.MEAN: {"dim": -1, "keepdim": True},
     IROpType.FLATTEN: {"start_dim": 1, "end_dim": -1},
     IROpType.RESHAPE: {"target_shape": []},
     IROpType.TRANSPOSE: {"dim0": 0, "dim1": 1},
@@ -395,4 +403,9 @@ C_PATTERNS: dict[str, str] = {
         "  out[2i]   = x[2i]*cos_θ - x[2i+1]*sin_θ;\n"
         "  out[2i+1] = x[2i]*sin_θ + x[2i+1]*cos_θ;"
     ),
+    IROpType.SUB: "out[i] = in0[i] - in1[i];",
+    IROpType.DIV: "out[i] = in0[i] / in1[i];",
+    IROpType.SQRT: "out[i] = sqrtf(in[i]);",
+    IROpType.MEAN: "out[0] = mean(in);",
+
 }

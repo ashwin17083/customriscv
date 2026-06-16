@@ -50,6 +50,14 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
     
     logger.info("Initializing Agentic RISC-V Pipeline...")
     
+    # Unwrap compiled or parallelized models to ensure standard FX symbolic tracing
+    if hasattr(model, "_orig_mod"):
+        logger.info("Unwrapping compiled model (_orig_mod)...")
+        model = model._orig_mod
+    if hasattr(model, "module"):
+        logger.info("Unwrapping module wrapper (DataParallel/DDP)...")
+        model = model.module
+    
     # 1. Trace the model
     logger.info("Tracing model with torch.fx...")
     try:
