@@ -43,7 +43,7 @@ VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "200000"))
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "codegen.txt"
 OUTPUT_DIR = Path(__file__).parent.parent / "output"
-LLM_MAX_TOKENS = 250_000
+LLM_MAX_TOKENS = 200_000
 
 
 def _read_generated_artifact_from_output(
