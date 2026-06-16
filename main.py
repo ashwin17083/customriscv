@@ -122,12 +122,23 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         if (out_dir / "weights.h").exists():
             initial_state["generated_header"] = (out_dir / "weights.h").read_text()
             initial_state["header_path"] = str(out_dir / "weights.h")
-        if (out_dir / "model_functions.h").exists():
-            initial_state["generated_functions_header"] = (out_dir / "model_functions.h").read_text()
-            initial_state["functions_header_path"] = str(out_dir / "model_functions.h")
+        if (out_dir / "model.h").exists():
+            initial_state["generated_model_header"] = (out_dir / "model.h").read_text()
+            initial_state["model_header_path"] = str(out_dir / "model.h")
         if (out_dir / "ir_graph.json").exists():
             with open(out_dir / "ir_graph.json", "r") as f:
-                initial_state["ir_graph"] = json.load(f)
+                ir_graph_data = json.load(f)
+                initial_state["ir_graph"] = ir_graph_data
+                initial_state["weights_metadata"] = ir_graph_data.get("weight_metadata", {})
+                
+                from ir import IRGraph
+                try:
+                    ir_obj = IRGraph.from_dict(ir_graph_data)
+                    initial_state["total_params"] = ir_obj.total_params()
+                    initial_state["model_memory_bytes"] = ir_obj.total_weight_memory()
+                    initial_state["ir_summary"] = ir_obj.layer_summary()
+                except Exception as e:
+                    logger.warning(f"Could not compute IR metrics: {e}")
         if (out_dir / "weights_manifest.json").exists():
             with open(out_dir / "weights_manifest.json", "r") as f:
                 initial_state["weights_manifest"] = json.load(f)

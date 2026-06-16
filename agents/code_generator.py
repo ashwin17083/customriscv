@@ -246,7 +246,9 @@ def _build_user_prompt(state: AgentState) -> str:
         )
     else:
         sections.append(
-            "Generate the complete model.c file for this neural network "
+            "Context for model generation follows."
+            "The actual generation instructions are provided later."
+            "Do not generate code based only on this section."
             "model targeting RISC-V rv32imac. "
             "Do NOT generate weights.h or model.h in this response — both "
             "are already available. Just #include \"model.h\" and use the "
@@ -390,21 +392,32 @@ def _build_model_c_prompt(state: AgentState, model_h: str) -> str:
     return "\n".join(sections)
 
 
-def _extract_c_artifact(response: str, filename: Literal["model.h", "model.c"]) -> str:
-    """Extract a named C artifact from an LLM response."""
-    escaped = re.escape(filename)
+def _extract_c_artifact(response, filename):
+
+    # Prefer explicitly labelled block
+    pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+
+    m = re.search(pattern, response, re.DOTALL)
+
+    if m:
+        return m.group(1).strip()
+
+    # fallback: choose largest code block
     blocks = re.findall(
-        rf"```(?:c|C)?\s*(?:{escaped})?\s*\n(.*?)```",
+        r"```(?:c|C)?\s*\n(.*?)```",
         response,
         re.DOTALL,
     )
-    if len(blocks) != 1:
-        raise ValueError(
-            f"Expected exactly one fenced code block for {filename}; "
-            f"found {len(blocks)}. The LLM response must be formatted as "
-            f"```c {filename}\\n...\\n```."
-        )
-    return blocks[0].strip()
+
+    if not blocks:
+        raise ValueError("No code block found.")
+
+    logger.warning(
+        "Multiple code blocks detected (%d). Using largest.",
+        len(blocks),
+    )
+
+    return max(blocks, key=len).strip()
 
 
 def _generate_deterministic_header(state: AgentState) -> str:
@@ -564,7 +577,7 @@ def generate_code(state: AgentState) -> dict:
         base_url=VLLM_BASE_URL,
         api_key=VLLM_API_KEY,
         model=VLLM_MODEL,
-        temperature=0.2 if not is_retry else 0.1,  # Lower temp on retries
+        temperature=0.2 if not is_retry else 0.0,  # Lower temp on retries
         max_tokens=LLM_MAX_TOKENS,
     )
 
