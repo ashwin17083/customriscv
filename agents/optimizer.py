@@ -27,8 +27,25 @@ VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "dummy")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "optimizer.txt"
+OUTPUT_DIR = Path(__file__).parent.parent / "output"
+LLM_MAX_TOKENS = 250_000
 
 MAX_OPTIMIZATION_ITERATIONS = 3
+
+
+def _read_generated_code_from_output(state: AgentState) -> str:
+    """Read model.c from disk so optimization uses verified output content."""
+    code_path = state.get("code_path", "")
+    if code_path:
+        path = Path(code_path)
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+
+    default_path = OUTPUT_DIR / "model.c"
+    if default_path.exists():
+        return default_path.read_text(encoding="utf-8")
+
+    return state.get("generated_code", "")
 
 
 def _load_system_prompt() -> str:
@@ -41,17 +58,11 @@ def _build_optimization_prompt(state: AgentState) -> str:
     sections = []
 
     # ── Current Code ────────────────────────────────────────────
-    code = state.get("generated_code", "")
+    code = _read_generated_code_from_output(state)
     sections.append("=" * 60)
     sections.append("CURRENT GENERATED C CODE")
     sections.append("=" * 60)
-    # Truncate if very long to fit context
-    if len(code) > 6000:
-        sections.append(code[:3000])
-        sections.append("\n... [truncated] ...\n")
-        sections.append(code[-3000:])
-    else:
-        sections.append(code)
+    sections.append(code)
 
     # ── IR Graph ────────────────────────────────────────────────
     ir_dict = state.get("ir_graph", {})
@@ -103,7 +114,9 @@ def _build_optimization_prompt(state: AgentState) -> str:
     sections.append("TASK")
     sections.append("=" * 60)
     sections.append(
-        "Analyze the simulation and synthesis results above. "
+        "Analyze the simulation and synthesis results above in detail. "
+        "Reference concrete functions, buffers, loops, weight arrays, and "
+        "IR nodes from the current output file wherever possible. "
         "Suggest up to 5 concrete code optimizations to improve "
         "performance (reduce cycles), power, and/or area. "
         "Return your suggestions as a JSON array."
@@ -168,7 +181,7 @@ def optimize(state: AgentState) -> dict:
         api_key=VLLM_API_KEY,
         model=VLLM_MODEL,
         temperature=0.3,
-        max_tokens=4096,
+        max_tokens=LLM_MAX_TOKENS,
     )
 
     messages = [

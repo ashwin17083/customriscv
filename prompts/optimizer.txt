@@ -41,6 +41,14 @@ OPTIMIZATION CATEGORIES
    - "Use compressed instructions (RVC) for the small helper functions"
 
 ═══════════════════════════════════════════════════════════
+PROMPT DETAILING
+═══════════════════════════════════════════════════════════
+Analyze the complete generated output file without truncating context. Ground each
+suggestion in concrete code locations such as helper functions, buffers, loops,
+weight arrays, or IR nodes, and explain why the optimization is safe for C99 and
+rv32imac.
+
+═══════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════
 

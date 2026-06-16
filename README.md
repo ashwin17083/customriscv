@@ -54,7 +54,8 @@ python visualize_ir.py output/ir_graph.json --format html --output output/ir_gra
 ## Pipeline Workflow
 
 1. `parse_fx_graph`: No-LLM parsing of `torch.fx` to Custom IR.
-2. `generate_code`: LLM writes `model.c` and `weights.h`.
+2. `generate_code`: deterministically writes `weights.h`, asks the LLM for
+   a `model.h` contract, then asks the LLM to implement `model.c`.
 3. `verify_code`: Compilation checks (loops back to generation if failed).
 4. **Human Review**: System pauses. User approves or rejects.
 5. `simulate`: Run binary on Hazard3.
