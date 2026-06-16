@@ -524,4 +524,12 @@ def parse_fx_graph(state: AgentState) -> dict:
         "total_params": total_params,
         "model_memory_bytes": model_memory,
         "fx_graph_str": str(fx_module.graph),
+        # Clear non-serializable PyTorch objects from state.
+        # They are no longer needed after parsing — all information has been
+        # extracted into serializable dicts/strings above.  Keeping them would
+        # crash LangGraph's MemorySaver (msgpack cannot serialise nn.Module,
+        # GraphModule, or Tensor objects).
+        "model": None,
+        "fx_graph": None,
+        "sample_input": None,
     }

@@ -226,6 +226,21 @@ Entry point:
 ### Issue 6: Allow Starting the Pipeline from a Specific Agent
 - **Fix:** Implemented a `--start-from` CLI argument in `main.py` that populates `AgentState` by loading previously generated files from the `output/` directory, computing metadata directly from the `ir_graph.json` or fallback PyTorch model.
 
+### Issue 7: `TypeError: Type is not msgpack serializable: TinyLlamaDemo`
+- **Root Cause:** `AgentState` contained live PyTorch objects (`model: nn.Module`, `fx_graph: GraphModule`, `sample_input: Tensor`) that LangGraph's `MemorySaver` tried to checkpoint via msgpack when hitting `interrupt_before=["human_review"]`.
+- **Fix:** `fx_parser.py` now returns `"model": None, "fx_graph": None, "sample_input": None` in its output dict, clearing these non-serializable objects from state after they've been consumed. `main.py` also conditionally adds these objects to `initial_state` only when `start_from == "parse_fx"`.
+
+### Issue 8: `agents/verifier.py` Accidentally Overwritten with Prompt Text
+- **Root Cause:** The file `agents/verifier.py` was accidentally replaced with the contents of `prompts/codegen.txt` (the LLM system prompt), destroying the Python verification code.
+- **Fix:** Restored `verifier.py` with proper implementation of `verify_code()`, `_check_model_header()`, and `_check_required_helper_definitions()` functions.
+
+### Issue 9: Cross-Compilation `wfi` Error and Simulation/Synthesis Fallback
+- **Root Cause:** Host `gcc` (used when no RISC-V cross-compiler is available) doesn't understand the `wfi` RISC-V instruction in the startup code. Additionally, when cross-compilation failed, the simulator returned a hard failure that blocked the pipeline.
+- **Fix:**
+  - Added `#ifdef __riscv` guards around `wfi` instruction in `tools/compile.py` startup code — host gcc gets a plain spin loop instead.
+  - Modified `agents/simulator.py` to automatically fall back to mock simulation when cross-compilation fails, logging a clear warning rather than halting the pipeline.
+  - Synthesis already had proper fallback via `MOCK_SYNTHESIS=true` (default).
+
 ---
 
 ## Verification Plan

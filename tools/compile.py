@@ -67,7 +67,12 @@ void _start(void) {
 
     /* Halt: write to test-finish register or infinite loop */
     while(1) {
+#ifdef __riscv
         __asm__ volatile ("wfi");
+#else
+        /* Host compilation: plain spin loop (for syntax/link testing) */
+        __asm__ volatile ("");
+#endif
     }
 }
 '''

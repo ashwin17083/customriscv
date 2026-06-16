@@ -88,12 +88,11 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
             reference_outputs = []
             
     # 3. Initialize State
+    start_from = config.get("start_from", "parse_fx")
+
     initial_state = {
         "model_name": config.get("name", "model"),
-        "model": model,
-        "fx_graph": traced_model,
         "fx_graph_str": str(traced_model.graph),
-        "sample_input": sample_input,
         "reference_outputs": reference_outputs,
         "enable_optimization": config.get("optimize", False),
         "weight_precision": config.get("precision", "f32"),
@@ -103,8 +102,13 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         "human_approved": False,
         "human_feedback": "",
     }
-    
-    start_from = config.get("start_from", "parse_fx")
+
+    if start_from == "parse_fx":
+        # parse_fx needs the live PyTorch objects; it will clear them
+        # from state once it has extracted all info into serializable fields.
+        initial_state["model"] = model
+        initial_state["fx_graph"] = traced_model
+        initial_state["sample_input"] = sample_input
     
     if start_from != "parse_fx":
         import json
