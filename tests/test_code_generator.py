@@ -46,6 +46,21 @@ class _FakeChatOpenAI:
         raise AssertionError(f"Unexpected prompt: {prompt[:200]}")
 
 
+class _FakeChatOpenAIWithStep3Drift(_FakeChatOpenAI):
+    def invoke(self, messages):
+        prompt = messages[-1].content
+        if "STEP 3 TASK: IMPLEMENT model.c" in prompt:
+            self.calls += 1
+            return _FakeResponse(
+                'Here is the implementation:\n'
+                '#include "model.h"\n'
+                'void model_inference(const float* input, float* output) {\n'
+                '    output[0] = input[0];\n'
+                '}\n'
+            )
+        return super().invoke(messages)
+
+
 def _minimal_state() -> dict:
     return {
         "ir_graph": {
@@ -127,6 +142,14 @@ def test_extract_c_artifact_prefers_named_block_and_recovers_common_llm_drift():
 
     assert (
         code_generator._extract_c_artifact(
+            'Here is the implementation:\n#include "model.h"\nvoid model_inference(const float* input, float* output) {}',
+            "model.c",
+        )
+        == '#include "model.h"\nvoid model_inference(const float* input, float* output) {}'
+    )
+
+    assert (
+        code_generator._extract_c_artifact(
             '```c model.h\n#pragma once\n```\n```c model.h\n#pragma once\n#include "weights.h"\n```',
             "model.h",
         )
@@ -153,6 +176,17 @@ def test_generate_code_writes_model_header_and_implementation(monkeypatch, tmp_p
     assert '#include "model.h"' in model_c_path.read_text(encoding="utf-8")
     assert result["generated_model_header"] == model_h_path.read_text(encoding="utf-8")
     assert result["generated_code"] == model_c_path.read_text(encoding="utf-8")
+
+
+def test_generate_code_recovers_unfenced_step3_model_c(monkeypatch, tmp_path):
+    monkeypatch.setattr(code_generator, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(code_generator, "ChatOpenAI", _FakeChatOpenAIWithStep3Drift)
+
+    result = code_generator.generate_code(_minimal_state())
+
+    assert result["generated_code"].startswith('#include "model.h"')
+    assert "Here is the implementation" not in result["generated_code"]
+    assert "void model_inference" in result["generated_code"]
 
 
 def test_generate_code_write_path_has_no_legacy_functions_header_variables():

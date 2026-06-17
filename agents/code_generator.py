@@ -361,19 +361,38 @@ def _build_model_c_prompt(state: AgentState, model_h: str) -> str:
     return "\n".join(sections)
 
 
-def _looks_like_c_artifact(text: str, filename: str) -> bool:
-    """Return True when unfenced LLM text appears to be the requested C artifact."""
+def _raw_c_artifact_start(text: str, filename: str) -> int | None:
+    """Find where an unfenced LLM response appears to start the C artifact."""
+    markers = (
+        ("#pragma once", "#ifndef", "#include", "void model_inference")
+        if filename.endswith(".h")
+        else ('#include "model.h"', "#include <", "void model_inference")
+    )
+    positions = [text.find(marker) for marker in markers if text.find(marker) >= 0]
+    if not positions:
+        return None
+    return min(positions)
+
+
+def _extract_raw_c_artifact_text(text: str, filename: str) -> str | None:
+    """Extract plausible raw C from an unfenced response, trimming leading prose."""
     stripped = text.strip()
     if not stripped:
-        return False
+        return None
 
-    if filename.endswith(".h"):
-        return any(
-            marker in stripped
-            for marker in ("#pragma once", "#ifndef", "#include", "void model_inference")
-        )
+    start = _raw_c_artifact_start(stripped, filename)
+    if start is None:
+        return None
 
-    return '#include "model.h"' in stripped or "void model_inference" in stripped
+    artifact = stripped[start:].strip()
+    if filename.endswith(".c") and "void model_inference" not in artifact:
+        return None
+    return artifact
+
+
+def _looks_like_c_artifact(text: str, filename: str) -> bool:
+    """Return True when unfenced LLM text appears to contain the requested C artifact."""
+    return _extract_raw_c_artifact_text(text, filename) is not None
 
 
 def _extract_c_artifact(response, filename):
@@ -409,14 +428,13 @@ def _extract_c_artifact(response, filename):
         )
         return max(generic_blocks, key=len).strip()
 
-    stripped = response.strip()
-    if _looks_like_c_artifact(stripped, filename):
+    raw_artifact = _extract_raw_c_artifact_text(response, filename)
+    if raw_artifact is not None:
         logger.warning(
-            "No fenced code block named %s found. Using raw LLM response as %s.",
-            filename,
+            "No fenced code block named %s found. Extracting raw C artifact text.",
             filename,
         )
-        return stripped
+        return raw_artifact
 
     raise ValueError(
         f"Could not extract {filename}: expected a fenced code block named "
