@@ -34,9 +34,9 @@ graph TD
 graph TD
 A[PyTorch Model] --> B[Torch FX Trace]
 B --> C[FX Parser]
-C --> D[Custom Hardware-Aware IR]
+C --> D[Custom IR]
 
-D --> E[Code Generation Agent]
+D --> E["Code Generator Agent<br/>(Qwen2.5-Coder-32B)"]
 E --> F[Verification Agent]
 
 F -->|Compilation / Static Check Failed| E
