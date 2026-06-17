@@ -53,7 +53,6 @@ I -->|Simulation Passed| J[Synthesis Agent]
 
 J --> K[Report Agent]
 
-K --> L[Deployable RISC-V Artifacts]
 ```
 
 
