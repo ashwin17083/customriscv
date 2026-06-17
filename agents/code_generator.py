@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -26,7 +27,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from agents.codegen_contract import required_helper_signatures
 from ir import IRGraph
-from state import AgentState
+from state import AgentState, LLMCallStats
 from tools.export_weights import (
     export_weights_binary,
     generate_weights_header,
@@ -560,6 +561,12 @@ def generate_code(state: AgentState) -> dict:
         f"Repair mode: {is_retry}"
     )
 
+    # ── Telemetry accumulators ───────────────────────────────
+    call_stats: list[LLMCallStats] = []
+    total_input = 0
+    total_output = 0
+    total_latency = 0.0
+
     # ── Generate deterministic weights.h ────────────────────────
     weights_h = _generate_deterministic_header(state)
     mode = state.get("weight_mode", "embedded")
@@ -591,9 +598,31 @@ def generate_code(state: AgentState) -> dict:
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 2 model.h ...")
     if is_retry:
         logger.info("  → REPAIR MODE: feeding back current code + errors")
+    t0 = time.perf_counter()
     header_response = llm.invoke(header_messages)
+    header_latency = time.perf_counter() - t0
     raw_header_response = header_response.content
     logger.info(f"LLM model.h response length: {len(raw_header_response)} chars")
+
+    # ── Collect model.h token stats ────────────────────────
+    h_usage = getattr(header_response, "usage_metadata", None) or {}
+    h_in  = h_usage.get("input_tokens",  0) if isinstance(h_usage, dict) else getattr(h_usage, "input_tokens",  0)
+    h_out = h_usage.get("output_tokens", 0) if isinstance(h_usage, dict) else getattr(h_usage, "output_tokens", 0)
+    call_stats.append(LLMCallStats(
+        agent="code_generator",
+        call_label="model.h",
+        input_tokens=h_in,
+        output_tokens=h_out,
+        total_tokens=h_in + h_out,
+        latency_s=header_latency,
+    ))
+    total_input   += h_in
+    total_output  += h_out
+    total_latency += header_latency
+    logger.info(
+        f"  model.h — input_tokens={h_in}, output_tokens={h_out}, "
+        f"latency={header_latency:.2f}s"
+    )
 
     # ── Extract model.h ─────────────────────────────────────────
     model_h = _extract_c_artifact(raw_header_response, "model.h")
@@ -605,9 +634,31 @@ def generate_code(state: AgentState) -> dict:
     ]
 
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 3 model.c ...")
+    t0 = time.perf_counter()
     c_response = llm.invoke(c_messages)
+    c_latency = time.perf_counter() - t0
     raw_c_response = c_response.content
     logger.info(f"LLM model.c response length: {len(raw_c_response)} chars")
+
+    # ── Collect model.c token stats ────────────────────────
+    c_usage = getattr(c_response, "usage_metadata", None) or {}
+    c_in  = c_usage.get("input_tokens",  0) if isinstance(c_usage, dict) else getattr(c_usage, "input_tokens",  0)
+    c_out = c_usage.get("output_tokens", 0) if isinstance(c_usage, dict) else getattr(c_usage, "output_tokens", 0)
+    call_stats.append(LLMCallStats(
+        agent="code_generator",
+        call_label="model.c",
+        input_tokens=c_in,
+        output_tokens=c_out,
+        total_tokens=c_in + c_out,
+        latency_s=c_latency,
+    ))
+    total_input   += c_in
+    total_output  += c_out
+    total_latency += c_latency
+    logger.info(
+        f"  model.c — input_tokens={c_in}, output_tokens={c_out}, "
+        f"latency={c_latency:.2f}s"
+    )
 
     # ── Extract model.c ─────────────────────────────────────────
     model_c = _extract_c_artifact(raw_c_response, "model.c")
@@ -620,9 +671,27 @@ def generate_code(state: AgentState) -> dict:
         loader_c=loader_c,
     )
 
+    # ── Merge new telemetry into existing state accumulators ─────
+    existing_stats: list[LLMCallStats] = list(state.get("llm_call_stats") or [])
+    existing_stats.extend(call_stats)
+    prev_input   = state.get("total_input_tokens",  0) or 0
+    prev_output  = state.get("total_output_tokens", 0) or 0
+    prev_latency = state.get("total_llm_latency_s", 0.0) or 0.0
+    prev_agent_latencies: dict = dict(state.get("agent_latencies") or {})
+    prev_agent_latencies["code_generator"] = (
+        prev_agent_latencies.get("code_generator", 0.0) + total_latency
+    )
+
     return {
         "generated_code": model_c,
         "generated_header": weights_h,
         "generated_model_header": model_h,
         **artifact_paths,
+        # Telemetry
+        "llm_call_stats": existing_stats,
+        "total_input_tokens":  prev_input  + total_input,
+        "total_output_tokens": prev_output + total_output,
+        "total_llm_latency_s": prev_latency + total_latency,
+        "agent_latencies": prev_agent_latencies,
     }
+

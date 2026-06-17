@@ -3,17 +3,24 @@ Entry Point / CLI for Agentic RISC-V Compiler.
 
 Initializes the model, runs FX tracing, and drives the LangGraph workflow.
 Handles human-in-the-loop interaction.
+
+Non-serializable PyTorch objects (nn.Module, GraphModule, Tensor) are placed
+into state.pytorch_object_store (keyed by thread_id) rather than directly into
+the LangGraph state so that LangGraph's MemorySaver can safely checkpoint the
+state using msgpack at every interrupt boundary.
 """
 
 import argparse
 import importlib.util
 import logging
 import sys
+import time
 import torch
 import torch.fx
 
 from graph import build_graph
 from examples.demo_model import create_demo_model, get_reference_output
+from state import store_pytorch_objects
 
 # Configure logging
 logging.basicConfig(
@@ -43,6 +50,53 @@ def load_model_from_file(filepath: str, module_name: str = "custom_model"):
                 return obj
     
     raise ValueError(f"Could not find a PyTorch model in {filepath}")
+
+
+def _print_telemetry_summary(final_state: dict) -> None:
+    """Print a formatted summary of token usage and latency to stdout."""
+    print("\n" + "=" * 60)
+    print("📊 PIPELINE TELEMETRY SUMMARY")
+    print("=" * 60)
+
+    total_in  = final_state.get("total_input_tokens",  0) or 0
+    total_out = final_state.get("total_output_tokens", 0) or 0
+    total_llm = final_state.get("total_llm_latency_s", 0.0) or 0.0
+
+    print(f"  Total Input  Tokens : {total_in:>10,}")
+    print(f"  Total Output Tokens : {total_out:>10,}")
+    print(f"  Total Tokens        : {total_in + total_out:>10,}")
+    print(f"  Total LLM Latency   : {total_llm:>10.2f}s")
+
+    agent_latencies: dict = final_state.get("agent_latencies") or {}
+    if agent_latencies:
+        print("\n  Per-Agent Latency:")
+        for agent, lat in sorted(agent_latencies.items()):
+            print(f"    {agent:<20} {lat:>8.2f}s")
+
+    call_stats: list = final_state.get("llm_call_stats") or []
+    if call_stats:
+        print("\n  Per-LLM-Call Breakdown:")
+        header = f"    {'Agent':<18} {'Call':<22} {'In':>8} {'Out':>8} {'Total':>8} {'Latency':>10}"
+        print(header)
+        print("    " + "-" * (len(header) - 4))
+        for s in call_stats:
+            if isinstance(s, dict):
+                agent = s.get("agent", "?")
+                label = s.get("call_label", "?")
+                inp   = s.get("input_tokens",  0)
+                out   = s.get("output_tokens", 0)
+                tot   = s.get("total_tokens",  0)
+                lat   = s.get("latency_s", 0.0)
+            else:
+                agent = getattr(s, "agent", "?")
+                label = getattr(s, "call_label", "?")
+                inp   = getattr(s, "input_tokens",  0)
+                out   = getattr(s, "output_tokens", 0)
+                tot   = getattr(s, "total_tokens",  0)
+                lat   = getattr(s, "latency_s", 0.0)
+            print(f"    {agent:<18} {label:<22} {inp:>8,} {out:>8,} {tot:>8,} {lat:>9.2f}s")
+
+    print("=" * 60)
 
 
 def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dict):
@@ -90,7 +144,11 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
     # 3. Initialize State
     start_from = config.get("start_from", "parse_fx")
 
+    # ── Thread ID (used by pytorch_object_store and run_config) ──
+    thread_id = "agentic_riscv_run_01"
+
     initial_state = {
+        "thread_id": thread_id,
         "model_name": config.get("name", "model"),
         "fx_graph_str": str(traced_model.graph),
         "reference_outputs": reference_outputs,
@@ -101,14 +159,29 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         "optimization_iteration": 0,
         "human_approved": False,
         "human_feedback": "",
+        # Telemetry – initialise accumulators
+        "llm_call_stats": [],
+        "total_input_tokens":  0,
+        "total_output_tokens": 0,
+        "total_llm_latency_s": 0.0,
+        "agent_latencies": {},
     }
 
     if start_from == "parse_fx":
-        # parse_fx needs the live PyTorch objects; it will clear them
-        # from state once it has extracted all info into serializable fields.
-        initial_state["model"] = model
-        initial_state["fx_graph"] = traced_model
-        initial_state["sample_input"] = sample_input
+        # Place the live PyTorch objects into the out-of-band store so that
+        # parse_fx_graph can retrieve them.  They must NOT go into the
+        # LangGraph state because msgpack cannot serialise nn.Module,
+        # GraphModule or Tensor objects when checkpointing at interrupts.
+        store_pytorch_objects(
+            thread_id=thread_id,
+            model=model,
+            fx_graph=traced_model,
+            sample_input=sample_input,
+        )
+        logger.info(
+            f"PyTorch objects stored in pytorch_object_store "
+            f"(thread_id='{thread_id}')"
+        )
     
     if start_from != "parse_fx":
         import json
@@ -161,11 +234,11 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
     app = build_graph(entry_point=start_from)
     
     # Configuration for the checkpointer (required for human-in-the-loop)
-    thread_id = "agentic_riscv_run_01"
     run_config = {"configurable": {"thread_id": thread_id}}
     
     # 5. Run Graph (until interrupt)
     logger.info("Starting graph execution...")
+    t_pipeline_start = time.perf_counter()
     try:
         # stream() lets us observe node execution
         for event in app.stream(initial_state, run_config):
@@ -230,11 +303,20 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
                 
     # 8. Check Final Result
     final_state = app.get_state(run_config).values
+    t_pipeline_end = time.perf_counter()
+
     if "final_report" in final_state:
         print("\n" + "="*60)
         print("🎉 PIPELINE COMPLETED")
         print("="*60)
         print("Report saved to output/report.md")
+
+    # 9. Print telemetry summary
+    _print_telemetry_summary(final_state)
+    logger.info(
+        f"Total pipeline wall-clock time: "
+        f"{t_pipeline_end - t_pipeline_start:.2f}s"
+    )
 
 
 def main():

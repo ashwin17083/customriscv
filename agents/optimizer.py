@@ -12,13 +12,14 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from ir import IRGraph
-from state import AgentState
+from state import AgentState, LLMCallStats
 
 logger = logging.getLogger(__name__)
 
@@ -190,15 +191,45 @@ def optimize(state: AgentState) -> dict:
     ]
 
     logger.info(f"Calling LLM for optimization suggestions...")
+    t0 = time.perf_counter()
     response = llm.invoke(messages)
+    llm_latency = time.perf_counter() - t0
     raw_response = response.content
 
-    # ── Parse suggestions ───────────────────────────────────────
+    # ── Parse suggestions ────────────────────────────────
     suggestions = _parse_suggestions(raw_response)
 
     logger.info(f"Generated {len(suggestions)} optimization suggestions:")
     for i, s in enumerate(suggestions, 1):
         logger.info(f"  {i}. {s}")
+
+    # ── Token stats ────────────────────────────────────────
+    usage = getattr(response, "usage_metadata", None) or {}
+    in_tok  = usage.get("input_tokens",  0) if isinstance(usage, dict) else getattr(usage, "input_tokens",  0)
+    out_tok = usage.get("output_tokens", 0) if isinstance(usage, dict) else getattr(usage, "output_tokens", 0)
+    logger.info(
+        f"  optimizer — input_tokens={in_tok}, output_tokens={out_tok}, "
+        f"latency={llm_latency:.2f}s"
+    )
+
+    new_stat = LLMCallStats(
+        agent="optimizer",
+        call_label=f"optimize_iter_{iteration}",
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        total_tokens=in_tok + out_tok,
+        latency_s=llm_latency,
+    )
+
+    existing_stats: list[LLMCallStats] = list(state.get("llm_call_stats") or [])
+    existing_stats.append(new_stat)
+    prev_input   = state.get("total_input_tokens",  0) or 0
+    prev_output  = state.get("total_output_tokens", 0) or 0
+    prev_latency = state.get("total_llm_latency_s", 0.0) or 0.0
+    prev_agent_latencies: dict = dict(state.get("agent_latencies") or {})
+    prev_agent_latencies["optimizer"] = (
+        prev_agent_latencies.get("optimizer", 0.0) + llm_latency
+    )
 
     return {
         "optimization_suggestions": suggestions,
@@ -206,4 +237,10 @@ def optimize(state: AgentState) -> dict:
         # Reset verification counter for re-verification after optimization
         "verification_attempts": 0,
         "verification_feedback": "",
+        # Telemetry
+        "llm_call_stats": existing_stats,
+        "total_input_tokens":  prev_input  + in_tok,
+        "total_output_tokens": prev_output + out_tok,
+        "total_llm_latency_s": prev_latency + llm_latency,
+        "agent_latencies": prev_agent_latencies,
     }

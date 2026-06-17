@@ -183,7 +183,52 @@ def generate_report(state: AgentState) -> dict:
                 lines.append(f"{i}. {s}")
             lines.append("")
 
+    # ── Telemetry ────────────────────────────────────────────────
+    lines.append("## 📈 Telemetry")
+    lines.append("")
+    total_in  = state.get("total_input_tokens",  0) or 0
+    total_out = state.get("total_output_tokens", 0) or 0
+    total_llm = state.get("total_llm_latency_s", 0.0) or 0.0
+    lines.append("### Token Usage")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| Total Input Tokens  | {total_in:,} |")
+    lines.append(f"| Total Output Tokens | {total_out:,} |")
+    lines.append(f"| Total Tokens        | {total_in + total_out:,} |")
+    lines.append(f"| Total LLM Latency   | {total_llm:.2f}s |")
+    lines.append("")
+
+    agent_latencies: dict = state.get("agent_latencies") or {}
+    if agent_latencies:
+        lines.append("### Per-Agent Wall-Clock Latency")
+        lines.append("")
+        lines.append("| Agent | Latency (s) |")
+        lines.append("|-------|-------------|")
+        for agent, lat in sorted(agent_latencies.items()):
+            lines.append(f"| {agent} | {lat:.2f} |")
+        lines.append("")
+
+    call_stats: list = state.get("llm_call_stats") or []
+    if call_stats:
+        lines.append("### LLM Call Breakdown")
+        lines.append("")
+        lines.append("| Agent | Call | Input Tokens | Output Tokens | Total | Latency (s) |")
+        lines.append("|-------|------|-------------|--------------|-------|-------------|")
+        for s in call_stats:
+            if isinstance(s, dict):
+                a, lbl = s.get("agent","?"), s.get("call_label","?")
+                inp, out = s.get("input_tokens",0), s.get("output_tokens",0)
+                tot, lat = s.get("total_tokens",0), s.get("latency_s",0.0)
+            else:
+                a, lbl = getattr(s,"agent","?"), getattr(s,"call_label","?")
+                inp, out = getattr(s,"input_tokens",0), getattr(s,"output_tokens",0)
+                tot, lat = getattr(s,"total_tokens",0), getattr(s,"latency_s",0.0)
+            lines.append(f"| {a} | {lbl} | {inp:,} | {out:,} | {tot:,} | {lat:.2f} |")
+        lines.append("")
+
     # ── Pipeline Summary ────────────────────────────────────────
+
     lines.append("## 📋 Pipeline Summary")
     lines.append("")
     lines.append("```")

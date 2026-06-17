@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from state import AgentState
 from tools.openroad import run_openroad_flow
@@ -30,6 +31,7 @@ def synthesize(state: AgentState) -> dict:
     logger.info("OPENROAD SYNTHESIS")
     logger.info("=" * 60)
 
+    t_start = time.perf_counter()
     sim_result = state.get("simulation_result", {})
 
     # ── Run the OpenROAD flow ───────────────────────────────────
@@ -53,4 +55,12 @@ def synthesize(state: AgentState) -> dict:
             f"{synthesis_result.get('detailed_report', 'Unknown error')}"
         )
 
-    return {"synthesis_result": synthesis_result}
+    synth_elapsed = time.perf_counter() - t_start
+    logger.info(f"  Synthesis wall-clock: {synth_elapsed:.2f}s")
+    prev_al: dict = dict(state.get("agent_latencies") or {})
+    prev_al["synthesizer"] = prev_al.get("synthesizer", 0.0) + synth_elapsed
+
+    return {
+        "synthesis_result": synthesis_result,
+        "agent_latencies": prev_al,
+    }

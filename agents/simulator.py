@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from state import AgentState
 from tools.compile import compile_to_elf, find_compiler, _is_riscv_compiler
@@ -38,6 +39,8 @@ def simulate(state: AgentState) -> dict:
     logger.info("HAZARD3 RISC-V SIMULATION")
     logger.info("=" * 60)
 
+    t_start = time.perf_counter()
+
     # ── Step 1: Cross-compile to RISC-V ELF ─────────────────────
     output_dir = os.path.dirname(code_path) if code_path else "output"
     elf_path = os.path.join(output_dir, "firmware.elf")
@@ -61,7 +64,11 @@ def simulate(state: AgentState) -> dict:
             f"{sim_result.get('raw_log', '')}"
         )
 
-        return {"simulation_result": sim_result}
+        sim_elapsed_mock = time.perf_counter() - t_start
+        prev_al: dict = dict(state.get("agent_latencies") or {})
+        prev_al["simulator"] = prev_al.get("simulator", 0.0) + sim_elapsed_mock
+        return {"simulation_result": sim_result, "agent_latencies": prev_al}
+
 
     logger.info(f"Cross-compilation successful: {elf_path}")
 
@@ -112,4 +119,14 @@ def simulate(state: AgentState) -> dict:
     logger.info(f"  Cycles: {sim_result['cycles']:,}")
     logger.info(f"  Output match: {sim_result['output_match']}")
 
-    return {"simulation_result": sim_result}
+    sim_elapsed = time.perf_counter() - t_start
+    logger.info(f"  Simulation wall-clock: {sim_elapsed:.2f}s")
+    prev_agent_latencies: dict = dict(state.get("agent_latencies") or {})
+    prev_agent_latencies["simulator"] = (
+        prev_agent_latencies.get("simulator", 0.0) + sim_elapsed
+    )
+
+    return {
+        "simulation_result": sim_result,
+        "agent_latencies": prev_agent_latencies,
+    }

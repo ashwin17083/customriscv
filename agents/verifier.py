@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from agents.codegen_contract import (
@@ -277,6 +278,7 @@ def verify_code(state: AgentState) -> dict:
     attempt = state.get("verification_attempts", 0) + 1
 
     logger.info(f"Verification attempt {attempt}/{MAX_VERIFICATION_ATTEMPTS}")
+    t_start = time.perf_counter()
 
     all_errors: list[str] = []
     all_warnings: list[str] = []
@@ -387,4 +389,12 @@ def verify_code(state: AgentState) -> dict:
         },
         "verification_attempts": attempt,
         "verification_feedback": "\n".join(feedback_lines) if not passed else "",
+        # Telemetry
+        "agent_latencies": {
+            **dict(state.get("agent_latencies") or {}),
+            "verifier": (
+                (state.get("agent_latencies") or {}).get("verifier", 0.0)
+                + (time.perf_counter() - t_start)
+            ),
+        },
     }

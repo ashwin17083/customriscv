@@ -4,12 +4,17 @@ FX Parser Agent — Converts a PyTorch FX graph into the Custom IR.
 This agent requires NO LLM. It performs deterministic analysis of the
 torch.fx.GraphModule and builds an IRGraph with all layer info, shapes,
 and weight metadata.
+
+PyTorch objects (nn.Module, GraphModule, Tensor) are retrieved from the
+module-level pytorch_object_store rather than from the LangGraph state
+to avoid msgpack serialisation failures at checkpoint boundaries.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 import numpy as np
@@ -17,7 +22,7 @@ import torch
 import torch.nn as nn
 
 from ir import IRGraph, IRNode, IROpType
-from state import AgentState
+from state import AgentState, retrieve_pytorch_objects, clear_pytorch_objects
 from tools.export_weights import export_weights_binary
 
 logger = logging.getLogger(__name__)
@@ -203,12 +208,28 @@ def parse_fx_graph(state: AgentState) -> dict:
     """
     LangGraph node function: Parse FX graph → Custom IR.
 
-    Reads: state["fx_graph"], state["model"]
+    PyTorch objects are retrieved from pytorch_object_store (keyed by
+    thread_id) rather than from the LangGraph state so that msgpack
+    serialisation at checkpoint boundaries always succeeds.
+
     Writes: state["ir_graph"], state["ir_summary"], state["weights_metadata"],
             state["weights_path"], state["total_params"], state["model_memory_bytes"]
     """
-    fx_module = state["fx_graph"]
-    model = state["model"]
+    t_start = time.perf_counter()
+
+    # ── Retrieve non-serializable objects from out-of-band store ──
+    thread_id = state.get("thread_id", "default")
+    pytorch_objects = retrieve_pytorch_objects(thread_id)
+    if not pytorch_objects:
+        raise RuntimeError(
+            f"No PyTorch objects found in pytorch_object_store for "
+            f"thread_id='{thread_id}'. "
+            "Did you call state.store_pytorch_objects() before running the graph?"
+        )
+
+    fx_module = pytorch_objects["fx_graph"]
+    model = pytorch_objects["model"]
+    sample_input_from_store = pytorch_objects.get("sample_input")
     model_name = state.get("model_name", "unnamed_model")
 
     logger.info(f"Parsing FX graph for model: {model_name}")
@@ -244,7 +265,7 @@ def parse_fx_graph(state: AgentState) -> dict:
                     break
 
         # Attempt shape propagation with a sample input
-        sample_input = state.get("sample_input", None)
+        sample_input = sample_input_from_store
         if sample_input is not None:
             ShapeProp(fx_module).propagate(sample_input)
     except Exception as e:
@@ -512,6 +533,21 @@ def parse_fx_graph(state: AgentState) -> dict:
         p.numel() * p.element_size() for p in model.parameters()
     )
 
+    # ── Release PyTorch objects from out-of-band store ──────────
+    # All information has been extracted into serializable dicts/strings.
+    # Clear from store so the GC can reclaim memory.
+    clear_pytorch_objects(thread_id)
+
+    t_elapsed = time.perf_counter() - t_start
+    logger.info(f"parse_fx_graph completed in {t_elapsed:.2f}s")
+
+    # Build sample_input_shape for informational display
+    sample_input_shape = (
+        list(sample_input_from_store.shape)
+        if sample_input_from_store is not None
+        else []
+    )
+
     return {
         "ir_graph": ir_graph.to_dict(),
         "ir_summary": ir_graph.layer_summary(),
@@ -524,12 +560,7 @@ def parse_fx_graph(state: AgentState) -> dict:
         "total_params": total_params,
         "model_memory_bytes": model_memory,
         "fx_graph_str": str(fx_module.graph),
-        # Clear non-serializable PyTorch objects from state.
-        # They are no longer needed after parsing — all information has been
-        # extracted into serializable dicts/strings above.  Keeping them would
-        # crash LangGraph's MemorySaver (msgpack cannot serialise nn.Module,
-        # GraphModule, or Tensor objects).
-        "model": None,
-        "fx_graph": None,
-        "sample_input": None,
+        "sample_input_shape": sample_input_shape,
+        # Telemetry
+        "agent_latencies": {"parse_fx": t_elapsed},
     }
