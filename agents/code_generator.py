@@ -159,15 +159,6 @@ def _build_user_prompt(state: AgentState) -> str:
                 f"// shape={shape}, originally: {name}"
             )
 
-    # ── FUNCTION HEADER ─────────────────────────────────────────
-    functions_h = state.get("generated_functions_header", "")
-    if functions_h:
-        sections.append("")
-        sections.append("=" * 60)
-        sections.append("FUNCTION PROTOTYPES (from model_functions.h)")
-        sections.append("=" * 60)
-        sections.append(functions_h)
-
     # ── REPAIR MODE: Current Code + Errors ──────────────────────
     if is_retry:
         current_code = _read_generated_code_from_output(state)
@@ -257,28 +248,6 @@ def _build_user_prompt(state: AgentState) -> str:
             "Output exactly ONE ```c model.c code block."
         )
 
-    return "\n".join(sections)
-
-def _build_header_prompt(state: AgentState) -> str:
-    """Prompt for generating the model_functions.h header."""
-    ir_dict = state.get("ir_graph", {})
-    ir_graph = IRGraph.from_dict(ir_dict)
-    
-    sections = []
-    sections.append("=" * 60)
-    sections.append("IR GRAPH")
-    sections.append("=" * 60)
-    sections.append(ir_graph.pretty_print())
-    sections.append("")
-    sections.append("=" * 60)
-    sections.append("TASK")
-    sections.append("=" * 60)
-    sections.append(
-        "Generate a C header file named `model_functions.h` containing ONLY the function "
-        "prototypes (declarations) needed to implement this neural network on bare-metal RISC-V. "
-        "Include `void model_inference(const float* input, float* output);` "
-        "Do NOT implement the functions. Output exactly ONE ```c model_functions.h code block."
-    )
     return "\n".join(sections)
 
 def _build_weight_context(state: AgentState) -> str:
@@ -393,32 +362,17 @@ def _build_model_c_prompt(state: AgentState, model_h: str) -> str:
 
 
 def _extract_c_artifact(response, filename):
-
-    # Prefer explicitly labelled block
+    """Extract exactly one fenced C artifact block for the requested filename."""
     pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+    blocks = re.findall(pattern, response, re.DOTALL)
 
-    m = re.search(pattern, response, re.DOTALL)
+    if len(blocks) != 1:
+        raise ValueError(
+            f"Expected exactly one fenced code block named {filename}, "
+            f"found {len(blocks)}."
+        )
 
-    if m:
-        return m.group(1).strip()
-
-    # fallback: choose largest code block
-    blocks = re.findall(
-        r"```(?:c|C)?\s*\n(.*?)```",
-        response,
-        re.DOTALL,
-    )
-
-    if not blocks:
-        raise ValueError("No code block found.")
-
-    logger.warning(
-        "Multiple code blocks detected (%d). Using largest.",
-        len(blocks),
-    )
-
-    return max(blocks, key=len).strip()
-
+    return blocks[0].strip()
 
 def _generate_deterministic_header(state: AgentState) -> str:
     """
