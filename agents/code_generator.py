@@ -159,15 +159,6 @@ def _build_user_prompt(state: AgentState) -> str:
                 f"// shape={shape}, originally: {name}"
             )
 
-    # ── FUNCTION HEADER ─────────────────────────────────────────
-    functions_h = state.get("generated_functions_header", "")
-    if functions_h:
-        sections.append("")
-        sections.append("=" * 60)
-        sections.append("FUNCTION PROTOTYPES (from model_functions.h)")
-        sections.append("=" * 60)
-        sections.append(functions_h)
-
     # ── REPAIR MODE: Current Code + Errors ──────────────────────
     if is_retry:
         current_code = _read_generated_code_from_output(state)
@@ -257,28 +248,6 @@ def _build_user_prompt(state: AgentState) -> str:
             "Output exactly ONE ```c model.c code block."
         )
 
-    return "\n".join(sections)
-
-def _build_header_prompt(state: AgentState) -> str:
-    """Prompt for generating the model_functions.h header."""
-    ir_dict = state.get("ir_graph", {})
-    ir_graph = IRGraph.from_dict(ir_dict)
-    
-    sections = []
-    sections.append("=" * 60)
-    sections.append("IR GRAPH")
-    sections.append("=" * 60)
-    sections.append(ir_graph.pretty_print())
-    sections.append("")
-    sections.append("=" * 60)
-    sections.append("TASK")
-    sections.append("=" * 60)
-    sections.append(
-        "Generate a C header file named `model_functions.h` containing ONLY the function "
-        "prototypes (declarations) needed to implement this neural network on bare-metal RISC-V. "
-        "Include `void model_inference(const float* input, float* output);` "
-        "Do NOT implement the functions. Output exactly ONE ```c model_functions.h code block."
-    )
     return "\n".join(sections)
 
 def _build_weight_context(state: AgentState) -> str:
@@ -392,33 +361,93 @@ def _build_model_c_prompt(state: AgentState, model_h: str) -> str:
     return "\n".join(sections)
 
 
+def _looks_like_c_artifact(text: str, filename: str) -> bool:
+    """Return True when unfenced LLM text appears to be the requested C artifact."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    if filename.endswith(".h"):
+        return any(
+            marker in stripped
+            for marker in ("#pragma once", "#ifndef", "#include", "void model_inference")
+        )
+
+    return '#include "model.h"' in stripped or "void model_inference" in stripped
+
+
 def _extract_c_artifact(response, filename):
+    """
+    Extract a generated C artifact from an LLM response.
 
-    # Prefer explicitly labelled block
-    pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+    Prefer a fenced block labelled with the requested filename. If the LLM omits
+    the filename label (or omits fences entirely but returns plausible C), recover
+    the artifact instead of failing the pipeline immediately. This makes step-2
+    model.h generation tolerant of common local-model formatting drift while
+    still raising a clear error for responses that do not contain usable C.
+    """
+    named_pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+    named_blocks = re.findall(named_pattern, response, re.DOTALL)
+    if named_blocks:
+        if len(named_blocks) > 1:
+            logger.warning(
+                "Multiple %s code blocks detected (%d). Using largest.",
+                filename,
+                len(named_blocks),
+            )
+        return max(named_blocks, key=len).strip()
 
-    m = re.search(pattern, response, re.DOTALL)
-
-    if m:
-        return m.group(1).strip()
-
-    # fallback: choose largest code block
-    blocks = re.findall(
+    generic_blocks = re.findall(
         r"```(?:c|C)?\s*\n(.*?)```",
         response,
         re.DOTALL,
     )
+    if generic_blocks:
+        logger.warning(
+            "No fenced code block named %s found. Using largest generic C block.",
+            filename,
+        )
+        return max(generic_blocks, key=len).strip()
 
-    if not blocks:
-        raise ValueError("No code block found.")
+    stripped = response.strip()
+    if _looks_like_c_artifact(stripped, filename):
+        logger.warning(
+            "No fenced code block named %s found. Using raw LLM response as %s.",
+            filename,
+            filename,
+        )
+        return stripped
 
-    logger.warning(
-        "Multiple code blocks detected (%d). Using largest.",
-        len(blocks),
+    raise ValueError(
+        f"Could not extract {filename}: expected a fenced code block named "
+        f"{filename}, a generic C code block, or raw C artifact text."
     )
 
-    return max(blocks, key=len).strip()
 
+def _invoke_llm_and_extract_artifact(llm, messages, filename: str, step_name: str) -> str:
+    """Invoke the LLM and retry once if artifact extraction fails."""
+    last_error: ValueError | None = None
+    for attempt in range(1, 3):
+        response = llm.invoke(messages)
+        raw_response = response.content
+        logger.info(
+            "LLM %s response length: %d chars",
+            filename,
+            len(raw_response),
+        )
+        try:
+            return _extract_c_artifact(raw_response, filename)
+        except ValueError as exc:
+            last_error = exc
+            if attempt == 1:
+                logger.warning(
+                    "%s extraction failed: %s. Retrying generation once.",
+                    step_name,
+                    exc,
+                )
+            else:
+                logger.error("%s extraction failed after retry: %s", step_name, exc)
+    raise last_error or ValueError(f"Could not extract {filename}.")
 
 def _generate_deterministic_header(state: AgentState) -> str:
     """
@@ -591,12 +620,10 @@ def generate_code(state: AgentState) -> dict:
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 2 model.h ...")
     if is_retry:
         logger.info("  → REPAIR MODE: feeding back current code + errors")
-    header_response = llm.invoke(header_messages)
-    raw_header_response = header_response.content
-    logger.info(f"LLM model.h response length: {len(raw_header_response)} chars")
-
     # ── Extract model.h ─────────────────────────────────────────
-    model_h = _extract_c_artifact(raw_header_response, "model.h")
+    model_h = _invoke_llm_and_extract_artifact(
+        llm, header_messages, "model.h", "step 2 model.h"
+    )
 
     # Step 3: ask the LLM to implement model.c against the model.h contract.
     c_messages = [
@@ -605,12 +632,10 @@ def generate_code(state: AgentState) -> dict:
     ]
 
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 3 model.c ...")
-    c_response = llm.invoke(c_messages)
-    raw_c_response = c_response.content
-    logger.info(f"LLM model.c response length: {len(raw_c_response)} chars")
-
     # ── Extract model.c ─────────────────────────────────────────
-    model_c = _extract_c_artifact(raw_c_response, "model.c")
+    model_c = _invoke_llm_and_extract_artifact(
+        llm, c_messages, "model.c", "step 3 model.c"
+    )
 
     # ── Write files ─────────────────────────────────────────────
     artifact_paths = _write_generated_artifacts(

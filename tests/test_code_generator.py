@@ -108,7 +108,7 @@ def _linear_ir_graph() -> dict:
     }
 
 
-def test_extract_c_artifact_requires_exactly_one_named_block():
+def test_extract_c_artifact_prefers_named_block_and_recovers_common_llm_drift():
     assert (
         code_generator._extract_c_artifact(
             '```c model.h\n#pragma once\n```', "model.h"
@@ -116,15 +116,25 @@ def test_extract_c_artifact_requires_exactly_one_named_block():
         == "#pragma once"
     )
 
-    with pytest.raises(ValueError, match="Expected exactly one fenced code block"):
-        code_generator._extract_c_artifact("#pragma once", "model.h")
-
-    with pytest.raises(ValueError, match="Expected exactly one fenced code block"):
+    assert (
         code_generator._extract_c_artifact(
-            '```c model.h\n#pragma once\n```\n```c model.h\n#pragma once\n```',
+            '```c\n#pragma once\n```', "model.h"
+        )
+        == "#pragma once"
+    )
+
+    assert code_generator._extract_c_artifact("#pragma once", "model.h") == "#pragma once"
+
+    assert (
+        code_generator._extract_c_artifact(
+            '```c model.h\n#pragma once\n```\n```c model.h\n#pragma once\n#include "weights.h"\n```',
             "model.h",
         )
+        == '#pragma once\n#include "weights.h"'
+    )
 
+    with pytest.raises(ValueError, match="Could not extract model.h"):
+        code_generator._extract_c_artifact("not C code", "model.h")
 
 def test_generate_code_writes_model_header_and_implementation(monkeypatch, tmp_path):
     monkeypatch.setattr(code_generator, "OUTPUT_DIR", tmp_path)
