@@ -28,9 +28,10 @@ graph TD
 
 ---
 
-flowchart TD
 
-```
+
+```mermaid
+graph TD
 A[PyTorch Model] --> B[Torch FX Trace]
 B --> C[FX Parser]
 C --> D[Custom Hardware-Aware IR]
