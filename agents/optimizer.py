@@ -1,9 +1,12 @@
 """
-Optimization Agent — Analyzes simulation/synthesis results and suggests
-code optimizations to improve performance, power, and area.
+Optimization Agent — Hardware-aware hints pass.
 
-Uses Qwen2.5-Coder-32B via local vLLM to generate optimization suggestions
-based on hardware metrics.
+Injects knowledge of the target micro-architecture (e.g. systolic arrays,
+VPUs, SIMD units) into a new code-generator run so the output C code is
+structured to exploit available hardware resources.
+
+Runs ONCE, after human approval, BEFORE simulation.  It does not loop.
+Uses Qwen2.5-Coder-32B via local vLLM.
 """
 
 from __future__ import annotations
@@ -163,12 +166,12 @@ def _parse_suggestions(response: str) -> list[str]:
 
 def optimize(state: AgentState) -> dict:
     """
-    LangGraph node function: Generate optimization suggestions.
+    LangGraph node function: Hardware-aware optimization hints pass.
 
-    Reads: state["generated_code"], state["simulation_result"],
-           state["synthesis_result"], state["ir_graph"]
-    Writes: state["optimization_suggestions"], state["optimization_iteration"],
-            state["verification_attempts"] (reset for re-verification)
+    Reads: state["generated_code"], state["ir_graph"]
+           (simulation_result / synthesis_result not yet available at this
+           point in the new flow — optimizer works from IR + code only).
+    Writes: state["optimization_suggestions"], state["optimization_iteration"]
     """
     iteration = state.get("optimization_iteration", 0) + 1
     logger.info(f"Optimization iteration {iteration}/{MAX_OPTIMIZATION_ITERATIONS}")
@@ -234,9 +237,6 @@ def optimize(state: AgentState) -> dict:
     return {
         "optimization_suggestions": suggestions,
         "optimization_iteration": iteration,
-        # Reset verification counter for re-verification after optimization
-        "verification_attempts": 0,
-        "verification_feedback": "",
         # Telemetry
         "llm_call_stats": existing_stats,
         "total_input_tokens":  prev_input  + in_tok,

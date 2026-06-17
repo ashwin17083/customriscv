@@ -1,9 +1,24 @@
 """
 LangGraph Workflow Definition.
 
-Connects the agents into a cyclic graph representing the
-compiler pipeline. Handles conditional edges for the
-verification loop and human-in-the-loop pause.
+New pipeline flow:
+  parse_fx → generate_code → verify
+    verify (pass)     → human_review
+    verify (fail)     → generate_code (retry, up to 5×)
+
+  human_review (approve, optimize=on)  → optimize → simulate
+  human_review (approve, optimize=off) → simulate
+  human_review (reject / retry)        → generate_code
+
+  simulate (output match)    → synthesize
+  simulate (output mismatch) → generate_code  ← NEW back-edge
+
+  synthesize → report  ← always (no optimize fork after synthesis)
+
+The Optimizer agent is a hardware-aware hints pass that injects
+knowledge of the target micro-architecture (e.g. systolic arrays,
+VPUs) into the code-generator prompt.  It runs once, before
+simulation, and does not loop.
 """
 
 from __future__ import annotations
@@ -26,132 +41,153 @@ from agents.report import generate_report
 
 logger = logging.getLogger(__name__)
 
+
 # ── Routing Functions ───────────────────────────────────────────
 
-def route_after_verification(state: AgentState) -> Literal["human_review", "generate_code", "report"]:
+def route_after_verification(
+    state: AgentState,
+) -> Literal["human_review", "generate_code"]:
     """Decide where to go after code verification."""
     result = state.get("verification_result", {})
     attempts = state.get("verification_attempts", 0)
 
     if result.get("passed", False):
-        logger.info("Routing: Verification passed -> Human Review")
+        logger.info("Routing: Verification passed → Human Review")
         return "human_review"
-    
-    if attempts >= 5: # MAX_VERIFICATION_ATTEMPTS
-        logger.warning("Routing: Max verification attempts reached -> Human Review")
+
+    if attempts >= 5:  # MAX_VERIFICATION_ATTEMPTS
+        logger.warning(
+            "Routing: Max verification attempts reached → Human Review"
+        )
         state["verification_exhausted"] = True
         return "human_review"
-    
-    logger.info("Routing: Verification failed -> Generate Code (Retry)")
+
+    logger.info("Routing: Verification failed → Generate Code (Retry)")
     return "generate_code"
 
 
-def route_after_human_review(state: AgentState) -> Literal["simulate", "generate_code", "verify", "report"]:
-    """Decide where to go after human review."""
+def route_after_human_review(
+    state: AgentState,
+) -> Literal["optimize", "simulate", "generate_code", "verify"]:
+    """Decide where to go after human review.
+
+    If the human approves:
+      - with --optimize  → optimize (hardware-aware hints) → simulate
+      - without --optimize → simulate directly
+    If rejected: back to generate_code.
+    """
     action = state.get("human_action", "")
-    
+
     if action == "approve" or state.get("human_approved", False):
-        logger.info("Routing: Human approved -> Simulate")
+        if state.get("enable_optimization", False):
+            logger.info("Routing: Human approved + optimization enabled → Optimize")
+            return "optimize"
+        logger.info("Routing: Human approved → Simulate")
         return "simulate"
-    elif action == "verify":
-        logger.info("Routing: Human requested re-verification -> Verify")
+
+    if action == "verify":
+        logger.info("Routing: Human requested re-verification → Verify")
         state["verification_attempts"] = 0
         state["verification_exhausted"] = False
         return "verify"
-    
-    logger.info("Routing: Human rejected/retry -> Generate Code")
-    # Reset verification attempts so it can try again
+
+    logger.info("Routing: Human rejected / retry → Generate Code")
     state["verification_attempts"] = 0
     state["verification_exhausted"] = False
     return "generate_code"
 
 
-def route_after_synthesis(state: AgentState) -> Literal["optimize", "report"]:
-    """Decide whether to run the optimization loop."""
-    enable_opt = state.get("enable_optimization", False)
-    iteration = state.get("optimization_iteration", 0)
-    
-    # Check if synthesis was successful before optimizing
-    synth_success = state.get("synthesis_result", {}).get("success", False)
-    
-    if enable_opt and synth_success and iteration < 3: # MAX_OPTIMIZATION_ITERATIONS
-        logger.info(f"Routing: Optimization enabled (Iter {iteration}) -> Optimize")
-        return "optimize"
-    
-    logger.info("Routing: Optimization disabled or max iterations -> Report")
-    return "report"
+def route_after_simulation(
+    state: AgentState,
+) -> Literal["synthesize", "generate_code"]:
+    """Decide where to go after simulation.
+
+    If the simulated output does NOT match the PyTorch reference,
+    route back to the code generator with feedback so the model can
+    be fixed.  Otherwise proceed to synthesis.
+    """
+    sim = state.get("simulation_result", {})
+
+    # output_match is True when outputs agree (or when there is no
+    # reference to compare against — mock path sets it True too).
+    if sim.get("output_match", True):
+        logger.info("Routing: Simulation passed → Synthesize")
+        return "synthesize"
+
+    logger.info("Routing: Simulation output mismatch → Generate Code (Retry)")
+    return "generate_code"
 
 
 # ── Graph Construction ──────────────────────────────────────────
 
 def build_graph(entry_point: str = "parse_fx"):
     """Build and compile the LangGraph workflow."""
-    
-    # Initialize StateGraph
+
     workflow = StateGraph(AgentState)
-    
-    # Add Nodes
-    workflow.add_node("parse_fx", parse_fx_graph)
+
+    # ── Nodes ──────────────────────────────────────────────────
+    workflow.add_node("parse_fx",      parse_fx_graph)
     workflow.add_node("generate_code", generate_code)
-    workflow.add_node("verify", verify_code)
-    workflow.add_node("human_review", human_review)
-    workflow.add_node("simulate", simulate)
-    workflow.add_node("synthesize", synthesize)
-    workflow.add_node("optimize", optimize)
-    workflow.add_node("report", generate_report)
-    
-    # Set Entry Point
+    workflow.add_node("verify",        verify_code)
+    workflow.add_node("human_review",  human_review)
+    workflow.add_node("optimize",      optimize)
+    workflow.add_node("simulate",      simulate)
+    workflow.add_node("synthesize",    synthesize)
+    workflow.add_node("report",        generate_report)
+
+    # ── Entry Point ────────────────────────────────────────────
     workflow.set_entry_point(entry_point)
-    
-    # Add Edges
-    workflow.add_edge("parse_fx", "generate_code")
+
+    # ── Edges ──────────────────────────────────────────────────
+
+    # parse_fx → generate_code → verify
+    workflow.add_edge("parse_fx",      "generate_code")
     workflow.add_edge("generate_code", "verify")
-    
-    # Conditional edge after verification
+
+    # verify: pass → human_review | fail → generate_code (retry)
     workflow.add_conditional_edges(
         "verify",
         route_after_verification,
         {
             "human_review": "human_review",
             "generate_code": "generate_code",
-            "report": "report"
-        }
+        },
     )
-    
-    # Conditional edge after human review
+
+    # human_review: approve+opt → optimize | approve → simulate | reject → generate_code
     workflow.add_conditional_edges(
         "human_review",
         route_after_human_review,
         {
-            "simulate": "simulate",
+            "optimize":      "optimize",
+            "simulate":      "simulate",
             "generate_code": "generate_code",
-            "verify": "verify",
-            "report": "report" # Fallback
-        }
+            "verify":        "verify",
+        },
     )
-    
-    workflow.add_edge("simulate", "synthesize")
-    
-    # Conditional edge after synthesis
+
+    # optimize runs once (hardware-aware hints pass), then → simulate
+    workflow.add_edge("optimize", "simulate")
+
+    # simulate: pass → synthesize | mismatch → generate_code
     workflow.add_conditional_edges(
-        "synthesize",
-        route_after_synthesis,
+        "simulate",
+        route_after_simulation,
         {
-            "optimize": "optimize",
-            "report": "report"
-        }
+            "synthesize":    "synthesize",
+            "generate_code": "generate_code",
+        },
     )
-    
-    # Edge from optimize loops back to generate_code
-    workflow.add_edge("optimize", "generate_code")
-    
-    workflow.add_edge("report", END)
-    
-    # Compile graph with a checkpointer for human-in-the-loop
+
+    # synthesize always → report
+    workflow.add_edge("synthesize", "report")
+    workflow.add_edge("report",     END)
+
+    # ── Compile ────────────────────────────────────────────────
     memory = MemorySaver()
     app = workflow.compile(
         checkpointer=memory,
-        interrupt_before=["human_review"] # Pause *before* executing the human_review node
+        interrupt_before=["human_review"],   # pause before human_review node
     )
-    
+
     return app

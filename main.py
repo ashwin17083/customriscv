@@ -273,7 +273,7 @@ def run_pipeline(model: torch.nn.Module, sample_input: torch.Tensor, config: dic
         while True:
             action = input(f"\n{options_text}").strip().lower()
             if action in ['a', 'approve']:
-                print("Code approved! Continuing to simulation...")
+                print("Code approved! Continuing to optimization/simulation...")
                 app.update_state(run_config, {"human_approved": True, "human_action": "approve"})
                 break
             elif action in ['r', 'reject', 'retry']:
@@ -337,7 +337,7 @@ def main():
     )
     parser.add_argument(
         "--start-from", type=str, default="parse_fx",
-        choices=["parse_fx", "generate_code", "verify", "simulate", "synthesize"],
+        choices=["parse_fx", "generate_code", "verify", "optimize", "simulate", "synthesize"],
         help="Start pipeline from a specific stage"
     )
     

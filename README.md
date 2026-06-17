@@ -1,5 +1,5 @@
-# Agentic RISC-V Compiler
-
+RISCify
+"Turn PyTorch Models into RISC-V Executables Automatically"
 A multi-agent LangGraph system that converts PyTorch models into optimized bare-metal C code targeting the RISC-V (`rv32imac`) architecture, simulates it, and synthesizes it for hardware metrics.
 
 ## Features
