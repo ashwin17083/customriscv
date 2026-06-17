@@ -436,11 +436,13 @@ def _extract_c_artifact(response, filename):
     if named_blocks:
         if len(named_blocks) > 1:
             logger.warning(
-                "Multiple %s code blocks detected (%d). Using largest.",
+                "Multiple %s code blocks detected (%d). Using final block.",
                 filename,
                 len(named_blocks),
             )
-        return max(named_blocks, key=len).strip()
+        # If the model echoes an old artifact before the corrected replacement,
+        # the final block is the intended replacement. Never concatenate blocks.
+        return named_blocks[-1].strip()
 
     generic_blocks = re.findall(
         r"```(?:c|C)?\s*\n(.*?)```",
@@ -449,10 +451,12 @@ def _extract_c_artifact(response, filename):
     )
     if generic_blocks:
         logger.warning(
-            "No fenced code block named %s found. Using largest generic C block.",
+            "No fenced code block named %s found. Using final generic C block.",
             filename,
         )
-        return max(generic_blocks, key=len).strip()
+        # Prefer the final generic block for the same reason: it is usually the
+        # replacement after any echoed context. Never concatenate blocks.
+        return generic_blocks[-1].strip()
 
     raw_artifact = _extract_raw_c_artifact_text(response, filename)
     if raw_artifact is not None:
@@ -511,30 +515,6 @@ def _write_llm_call_log(
     logger.info("LLM step %d call log written to: %s", step_number, log_path)
     return log_path
 
-def _invoke_llm_and_extract_artifact(llm, messages, filename: str, step_name: str) -> str:
-    """Invoke the LLM and retry once if artifact extraction fails."""
-    last_error: ValueError | None = None
-    for attempt in range(1, 3):
-        response = llm.invoke(messages)
-        raw_response = response.content
-        logger.info(
-            "LLM %s response length: %d chars",
-            filename,
-            len(raw_response),
-        )
-        try:
-            return _extract_c_artifact(raw_response, filename)
-        except ValueError as exc:
-            last_error = exc
-            if attempt == 1:
-                logger.warning(
-                    "%s extraction failed: %s. Retrying generation once.",
-                    step_name,
-                    exc,
-                )
-            else:
-                logger.error("%s extraction failed after retry: %s", step_name, exc)
-    raise last_error or ValueError(f"Could not extract {filename}.")
 
 def _invoke_llm_and_extract_artifact(
     llm, messages, filename: str, step_name: str, step_number: int
@@ -646,6 +626,14 @@ def _generate_fallback_header(state: AgentState) -> str:
     return "\n".join(lines)
 
 
+def _replace_text_file(path: Path, content: str) -> None:
+    """Atomically replace a generated artifact instead of appending to it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
 def _write_generated_artifacts(
     model_c: str,
     model_h: str,
@@ -663,9 +651,9 @@ def _write_generated_artifacts(
     model_header_path = OUTPUT_DIR / "model.h"
     header_path = OUTPUT_DIR / "weights.h"
 
-    code_path.write_text(model_c, encoding="utf-8")
-    model_header_path.write_text(model_h, encoding="utf-8")
-    header_path.write_text(weights_h, encoding="utf-8")
+    _replace_text_file(code_path, model_c)
+    _replace_text_file(model_header_path, model_h)
+    _replace_text_file(header_path, weights_h)
 
     logger.info(f"Generated code written to: {code_path}")
     logger.info(f"Generated model header written to: {model_header_path}")
@@ -679,7 +667,7 @@ def _write_generated_artifacts(
 
     if loader_c:
         loader_path = OUTPUT_DIR / "weights_loader.c"
-        loader_path.write_text(loader_c, encoding="utf-8")
+        _replace_text_file(loader_path, loader_c)
         logger.info(f"Generated loader written to: {loader_path}")
         paths["loader_path"] = str(loader_path)
 

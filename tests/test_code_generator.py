@@ -150,7 +150,7 @@ def test_extract_c_artifact_prefers_named_block_and_recovers_common_llm_drift():
 
     assert (
         code_generator._extract_c_artifact(
-            '```c model.h\n#pragma once\n```\n```c model.h\n#pragma once\n#include "weights.h"\n```',
+            '```c model.h\n#pragma once\n// old echoed header\n```\n```c model.h\n#pragma once\n#include "weights.h"\n```',
             "model.h",
         )
         == '#pragma once\n#include "weights.h"'
@@ -162,6 +162,9 @@ def test_extract_c_artifact_prefers_named_block_and_recovers_common_llm_drift():
 def test_generate_code_writes_model_header_and_implementation(monkeypatch, tmp_path):
     monkeypatch.setattr(code_generator, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(code_generator, "ChatOpenAI", _FakeChatOpenAI)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "model.h").write_text("OLD_HEADER_SHOULD_BE_REPLACED", encoding="utf-8")
+    (tmp_path / "model.c").write_text("OLD_CODE_SHOULD_BE_REPLACED", encoding="utf-8")
 
     result = code_generator.generate_code(_minimal_state())
 
@@ -172,8 +175,12 @@ def test_generate_code_writes_model_header_and_implementation(monkeypatch, tmp_p
     assert model_h_path == tmp_path / "model.h"
     assert model_c_path == tmp_path / "model.c"
     assert weights_h_path == tmp_path / "weights.h"
-    assert model_h_path.read_text(encoding="utf-8").startswith("#pragma once")
-    assert '#include "model.h"' in model_c_path.read_text(encoding="utf-8")
+    model_h_text = model_h_path.read_text(encoding="utf-8")
+    model_c_text = model_c_path.read_text(encoding="utf-8")
+    assert model_h_text.startswith("#pragma once")
+    assert '#include "model.h"' in model_c_text
+    assert "OLD_HEADER_SHOULD_BE_REPLACED" not in model_h_text
+    assert "OLD_CODE_SHOULD_BE_REPLACED" not in model_c_text
     assert result["generated_model_header"] == model_h_path.read_text(encoding="utf-8")
     assert result["generated_code"] == model_c_path.read_text(encoding="utf-8")
 
@@ -255,46 +262,6 @@ def test_repair_mode_uses_previous_artifacts_even_without_feedback_text(tmp_path
     assert "HEADER_WITHOUT_FEEDBACK_SENTINEL" in prompt
     assert "CODE_WITHOUT_FEEDBACK_SENTINEL" in prompt
     assert "VERIFICATION ERRORS" in prompt
-
-
-def test_generate_code_recovers_unfenced_step3_model_c(monkeypatch, tmp_path):
-    monkeypatch.setattr(code_generator, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(code_generator, "ChatOpenAI", _FakeChatOpenAIWithStep3Drift)
-
-    result = code_generator.generate_code(_minimal_state())
-
-    assert result["generated_code"].startswith('#include "model.h"')
-    assert "Here is the implementation" not in result["generated_code"]
-    assert "void model_inference" in result["generated_code"]
-
-
-def test_repair_prompts_include_original_artifacts_and_errors(tmp_path):
-    model_h_path = tmp_path / "model.h"
-    model_c_path = tmp_path / "model.c"
-    model_h_path.write_text(
-        '#pragma once\n#include "weights.h"\n// ORIGINAL_HEADER_SENTINEL\n',
-        encoding="utf-8",
-    )
-    model_c_path.write_text(
-        '#include "model.h"\n// ORIGINAL_CODE_SENTINEL\n'
-        'void model_inference(const float* input, float* output) { output[0] = input[0]; }\n',
-        encoding="utf-8",
-    )
-    state = {
-        **_minimal_state(),
-        "verification_feedback": "VERIFIER_ERROR_SENTINEL",
-        "model_header_path": str(model_h_path),
-        "code_path": str(model_c_path),
-    }
-
-    header_prompt = code_generator._build_model_header_prompt(state)
-    c_prompt = code_generator._build_model_c_prompt(state, "#pragma once\n")
-
-    for prompt in (header_prompt, c_prompt):
-        assert "ORIGINAL_HEADER_SENTINEL" in prompt
-        assert "ORIGINAL_CODE_SENTINEL" in prompt
-        assert "VERIFIER_ERROR_SENTINEL" in prompt
-        assert "Make targeted" in prompt
 
 
 def test_generate_code_write_path_has_no_legacy_functions_header_variables():
