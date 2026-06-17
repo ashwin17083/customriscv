@@ -34,7 +34,7 @@ One LLM call generates `model.c`. The LLM must invent function signatures and im
 ### New Design: Two LLM Calls
 
 **LLM Call 1 — Generate `model.h`** (Contract Definition):
-- Receives: IR graph + weight tensor list + required helper signatures (provided via `codegen_contract.py`).
+- Receives: IR graph + weight tensor list + required helper signatures derived from `ir.py`.
 - Outputs: A complete `model.h` header containing includes (`#include "weights.h"`), tensor contracts, dependencies, static-size macros, and function prototypes.
 - This creates a rigid and verifiable contract for the next step.
 
@@ -52,9 +52,6 @@ One LLM call generates `model.c`. The LLM must invent function signatures and im
 - Write `model.h` to `output/`.
 - Return in state: `generated_model_header`, `model_header_path`.
 
-##### [NEW] [codegen_contract.py](file:///c:/Coding%20projects/agentic-riscv/agents/codegen_contract.py)
-- Defines `required_helper_signatures(ir_graph)` to inject standardized C prototypes (like `conv2d`, `linear`) into the LLM prompts based on the nodes in the IR graph.
-
 ##### [MODIFY] [codegen.txt](file:///c:/Coding%20projects/agentic-riscv/prompts/codegen.txt)
 - Update instructions for Step 2 (`model.h` generation) and Step 3 (`model.c` implementation).
 
@@ -63,7 +60,7 @@ One LLM call generates `model.c`. The LLM must invent function signatures and im
 - Add `model_header_path: str` field.
 
 ##### [MODIFY] [verifier.py](file:///c:/Coding%20projects/agentic-riscv/agents/verifier.py)
-- Update compilation checks to validate `model.h` inclusion and enforce `codegen_contract.py` compliance.
+- Update compilation checks to validate `model.h` inclusion and enforce IR-derived helper compliance.
 
 ---
 
@@ -168,14 +165,13 @@ Add a `--start-from` CLI argument that accepts a node name (`parse_fx`, `generat
 | File | Action | Purpose |
 |------|--------|---------|
 | [code_generator.py](file:///c:/Coding%20projects/agentic-riscv/agents/code_generator.py) | MODIFY | File-backed code persistence, two-phase `model.h`/`model.c` generation, 200K max_tokens |
-| [codegen_contract.py](file:///c:/Coding%20projects/agentic-riscv/agents/codegen_contract.py) | NEW | Standardizes required helper signatures dynamically based on IR graph |
 | [codegen.txt](file:///c:/Coding%20projects/agentic-riscv/prompts/codegen.txt) | MODIFY | Add `model.h` contract generation instructions |
 | [export_weights.py](file:///c:/Coding%20projects/agentic-riscv/tools/export_weights.py) | MODIFY | Sanitize inf/nan values in C literals |
 | [graph.py](file:///c:/Coding%20projects/agentic-riscv/graph.py) | MODIFY | Route max-retries to human review, configurable entry point |
 | [main.py](file:///c:/Coding%20projects/agentic-riscv/main.py) | MODIFY | Mid-pipeline state recovery of `model.h` and robust extraction of `weights_metadata` from IR/model |
 | [state.py](file:///c:/Coding%20projects/agentic-riscv/state.py) | MODIFY | Replace legacy header fields with `generated_model_header`, add `verification_exhausted` |
 | [test_code_generator.py](file:///c:/Coding%20projects/agentic-riscv/tests/test_code_generator.py) | NEW | Added unit tests to verify the two-phase `model.h` contract generator behavior |
-| [verifier.py](file:///c:/Coding%20projects/agentic-riscv/agents/verifier.py) | MODIFY | Validate `model.h` inclusion and `codegen_contract.py` enforcement |
+| [verifier.py](file:///c:/Coding%20projects/agentic-riscv/agents/verifier.py) | MODIFY | Validate `model.h` inclusion and IR-derived helper enforcement |
 | [IMPLEMENTATION_PLAN.md](file:///c:/Coding%20projects/agentic-riscv/IMPLEMENTATION_PLAN.md) | MODIFY | Update with all new changes |
 
 ---
@@ -194,6 +190,6 @@ Add a `--start-from` CLI argument that accepts a node name (`parse_fx`, `generat
 3. Test `--start-from verify` after manually editing `output/model.c`
 
 ### Manual Verification
-- Check LLM prompts in logs to confirm `model.h` content and `codegen_contract` signatures are included in Call 2
+- Check LLM prompts in logs to confirm `model.h` content and IR-derived helper signatures are included in Call 2
 - Verify that `--start-from verify` correctly populates reporting metrics (no empty dictionaries/tables)
 - Verify that the human review interrupt shows the correct options after verification exhaustion

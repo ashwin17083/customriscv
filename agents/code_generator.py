@@ -18,13 +18,14 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from agents.codegen_contract import required_helper_signatures
+from ir import required_helper_signatures
 from ir import IRGraph
 from state import AgentState
 from tools.export_weights import (
@@ -80,6 +81,60 @@ def _read_generated_model_header_from_output(state: AgentState) -> str:
     )
 
 
+def _is_repair_mode(state: AgentState) -> bool:
+    """Return True when generation should receive previous artifacts for repair."""
+    if state.get("verification_feedback", ""):
+        return True
+    verification_result = state.get("verification_result", {})
+    if verification_result and not verification_result.get("passed", False):
+        return True
+    return state.get("verification_attempts", 0) > 0
+
+
+def _build_repair_context_sections(state: AgentState, target_artifact: str) -> list[str]:
+    """Build repair-mode context with original generated artifacts and errors."""
+    feedback = state.get("verification_feedback", "")
+    current_header = _read_generated_model_header_from_output(state)
+    current_code = _read_generated_code_from_output(state)
+
+    sections: list[str] = [
+        "",
+        "=" * 60,
+        f"⚠️  REPAIR MODE CONTEXT FOR {target_artifact}",
+        "=" * 60,
+        "Use the original generated artifacts below as the starting point. "
+        "Make targeted fixes only; do not drop unrelated declarations, helper "
+        "functions, buffers, or model_inference steps.",
+    ]
+
+    if current_header:
+        sections.extend([
+            "",
+            "=" * 60,
+            "ORIGINAL model.h FROM PREVIOUS GENERATION",
+            "=" * 60,
+            current_header,
+        ])
+
+    if current_code:
+        sections.extend([
+            "",
+            "=" * 60,
+            "ORIGINAL model.c FROM PREVIOUS GENERATION",
+            "=" * 60,
+            current_code,
+        ])
+
+    sections.extend([
+        "",
+        "=" * 60,
+        "VERIFICATION ERRORS — FIX THESE",
+        "=" * 60,
+        feedback or "(No verifier feedback was provided.)",
+    ])
+    return sections
+
+
 def _load_system_prompt() -> str:
     """Load the code generation system prompt."""
     return PROMPT_PATH.read_text(encoding="utf-8")
@@ -120,7 +175,7 @@ def _build_user_prompt(state: AgentState) -> str:
     """
     ir_dict = state.get("ir_graph", {})
     ir_graph = IRGraph.from_dict(ir_dict)
-    is_retry = bool(state.get("verification_feedback", ""))
+    is_retry = _is_repair_mode(state)
 
     sections = []
 
@@ -159,40 +214,15 @@ def _build_user_prompt(state: AgentState) -> str:
                 f"// shape={shape}, originally: {name}"
             )
 
-    # ── FUNCTION HEADER ─────────────────────────────────────────
-    functions_h = state.get("generated_functions_header", "")
-    if functions_h:
-        sections.append("")
-        sections.append("=" * 60)
-        sections.append("FUNCTION PROTOTYPES (from model_functions.h)")
-        sections.append("=" * 60)
-        sections.append(functions_h)
-
-    # ── REPAIR MODE: Current Code + Errors ──────────────────────
+    # ── REPAIR MODE: Original Artifacts + Errors ────────────────
     if is_retry:
-        current_code = _read_generated_code_from_output(state)
-        feedback = state.get("verification_feedback", "")
-
-        if current_code:
-            sections.append("")
-            sections.append("=" * 60)
-            sections.append(
-                "⚠️  CURRENT CODE (contains errors — you are in REPAIR MODE)"
-            )
-            sections.append("=" * 60)
-            sections.append(current_code)
-
-        sections.append("")
-        sections.append("=" * 60)
-        sections.append("⚠️  VERIFICATION ERRORS — FIX THESE")
-        sections.append("=" * 60)
-        sections.append(feedback)
+        sections.extend(_build_repair_context_sections(state, "model.c"))
         sections.append("")
         sections.append(
             "You are in REPAIR MODE. Fix ALL the errors listed above "
-            "in the current code. Output the COMPLETE fixed model.c file. "
-            "Keep the overall structure intact. Mark fixes with "
-            "// FIX: <description> comments."
+            "using the original model.h and model.c as context. Output the "
+            "COMPLETE fixed model.c file. Keep the overall structure intact. "
+            "Mark fixes with // FIX: <description> comments."
         )
     else:
         # ── First attempt: generate from scratch ────────────────
@@ -259,28 +289,6 @@ def _build_user_prompt(state: AgentState) -> str:
 
     return "\n".join(sections)
 
-def _build_header_prompt(state: AgentState) -> str:
-    """Prompt for generating the model_functions.h header."""
-    ir_dict = state.get("ir_graph", {})
-    ir_graph = IRGraph.from_dict(ir_dict)
-    
-    sections = []
-    sections.append("=" * 60)
-    sections.append("IR GRAPH")
-    sections.append("=" * 60)
-    sections.append(ir_graph.pretty_print())
-    sections.append("")
-    sections.append("=" * 60)
-    sections.append("TASK")
-    sections.append("=" * 60)
-    sections.append(
-        "Generate a C header file named `model_functions.h` containing ONLY the function "
-        "prototypes (declarations) needed to implement this neural network on bare-metal RISC-V. "
-        "Include `void model_inference(const float* input, float* output);` "
-        "Do NOT implement the functions. Output exactly ONE ```c model_functions.h code block."
-    )
-    return "\n".join(sections)
-
 def _build_weight_context(state: AgentState) -> str:
     """Build deterministic weight context shared by model.h/model.c prompts."""
     lines = [
@@ -318,7 +326,7 @@ def _build_model_header_prompt(state: AgentState) -> str:
     """
     ir_graph = IRGraph.from_dict(state.get("ir_graph", {}))
     required_helpers = required_helper_signatures(state.get("ir_graph", {}))
-    is_retry = bool(state.get("verification_feedback", ""))
+    is_retry = _is_repair_mode(state)
     sections = [
         "=" * 60,
         "IR GRAPH",
@@ -344,24 +352,11 @@ def _build_model_header_prompt(state: AgentState) -> str:
     ]
 
     if is_retry:
-        current_header = _read_generated_model_header_from_output(state)
-        feedback = state.get("verification_feedback", "")
-        if current_header:
-            sections.extend([
-                "",
-                "=" * 60,
-                "CURRENT model.h (contains errors — REPAIR MODE)",
-                "=" * 60,
-                current_header,
-            ])
-        sections.extend([
-            "",
-            "=" * 60,
-            "VERIFICATION ERRORS — FIX HEADER-RELEVANT ISSUES",
-            "=" * 60,
-            feedback,
-            "Make targeted fixes and output the COMPLETE fixed model.h.",
-        ])
+        sections.extend(_build_repair_context_sections(state, "model.h"))
+        sections.append(
+            "Make targeted header fixes and output the COMPLETE fixed model.h. "
+            "Preserve any declarations that are still needed by the original model.c."
+        )
 
     return "\n".join(sections)
 
@@ -392,33 +387,167 @@ def _build_model_c_prompt(state: AgentState, model_h: str) -> str:
     return "\n".join(sections)
 
 
+def _raw_c_artifact_start(text: str, filename: str) -> int | None:
+    """Find where an unfenced LLM response appears to start the C artifact."""
+    markers = (
+        ("#pragma once", "#ifndef", "#include", "void model_inference")
+        if filename.endswith(".h")
+        else ('#include "model.h"', "#include <", "void model_inference")
+    )
+    positions = [text.find(marker) for marker in markers if text.find(marker) >= 0]
+    if not positions:
+        return None
+    return min(positions)
+
+
+def _extract_raw_c_artifact_text(text: str, filename: str) -> str | None:
+    """Extract plausible raw C from an unfenced response, trimming leading prose."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    start = _raw_c_artifact_start(stripped, filename)
+    if start is None:
+        return None
+
+    artifact = stripped[start:].strip()
+    if filename.endswith(".c") and "void model_inference" not in artifact:
+        return None
+    return artifact
+
+
+def _looks_like_c_artifact(text: str, filename: str) -> bool:
+    """Return True when unfenced LLM text appears to contain the requested C artifact."""
+    return _extract_raw_c_artifact_text(text, filename) is not None
+
+
 def _extract_c_artifact(response, filename):
+    """
+    Extract a generated C artifact from an LLM response.
 
-    # Prefer explicitly labelled block
-    pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+    Prefer a fenced block labelled with the requested filename. If the LLM omits
+    the filename label (or omits fences entirely but returns plausible C), recover
+    the artifact instead of failing the pipeline immediately. This makes step-2
+    model.h generation tolerant of common local-model formatting drift while
+    still raising a clear error for responses that do not contain usable C.
+    """
+    named_pattern = rf"```(?:c|C)?\s*{re.escape(filename)}\s*\n(.*?)```"
+    named_blocks = re.findall(named_pattern, response, re.DOTALL)
+    if named_blocks:
+        if len(named_blocks) > 1:
+            logger.warning(
+                "Multiple %s code blocks detected (%d). Using final block.",
+                filename,
+                len(named_blocks),
+            )
+        # If the model echoes an old artifact before the corrected replacement,
+        # the final block is the intended replacement. Never concatenate blocks.
+        return named_blocks[-1].strip()
 
-    m = re.search(pattern, response, re.DOTALL)
-
-    if m:
-        return m.group(1).strip()
-
-    # fallback: choose largest code block
-    blocks = re.findall(
+    generic_blocks = re.findall(
         r"```(?:c|C)?\s*\n(.*?)```",
         response,
         re.DOTALL,
     )
+    if generic_blocks:
+        logger.warning(
+            "No fenced code block named %s found. Using final generic C block.",
+            filename,
+        )
+        # Prefer the final generic block for the same reason: it is usually the
+        # replacement after any echoed context. Never concatenate blocks.
+        return generic_blocks[-1].strip()
 
-    if not blocks:
-        raise ValueError("No code block found.")
+    raw_artifact = _extract_raw_c_artifact_text(response, filename)
+    if raw_artifact is not None:
+        logger.warning(
+            "No fenced code block named %s found. Extracting raw C artifact text.",
+            filename,
+        )
+        return raw_artifact
 
-    logger.warning(
-        "Multiple code blocks detected (%d). Using largest.",
-        len(blocks),
+    raise ValueError(
+        f"Could not extract {filename}: expected a fenced code block named "
+        f"{filename}, a generic C code block, or raw C artifact text."
     )
 
-    return max(blocks, key=len).strip()
 
+def _write_llm_call_log(
+    *,
+    step_number: int,
+    attempt: int,
+    messages,
+    raw_response: str,
+) -> Path:
+    """Persist the exact LLM input prompt and raw response for debugging."""
+    log_dir = OUTPUT_DIR / "llm_call"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    log_path = log_dir / f"llm_step_{step_number}_{timestamp}_attempt{attempt}.txt"
+
+    lines = [
+        f"LLM step: {step_number}",
+        f"Attempt: {attempt}",
+        f"UTC timestamp: {timestamp}",
+        "",
+        "=" * 80,
+        "INPUT PROMPT",
+        "=" * 80,
+    ]
+    for index, message in enumerate(messages, 1):
+        role = getattr(message, "type", message.__class__.__name__)
+        content = getattr(message, "content", str(message))
+        lines.extend([
+            "",
+            f"--- Message {index}: {role} ---",
+            str(content),
+        ])
+
+    lines.extend([
+        "",
+        "=" * 80,
+        "RAW LLM RESPONSE",
+        "=" * 80,
+        raw_response,
+        "",
+    ])
+    log_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("LLM step %d call log written to: %s", step_number, log_path)
+    return log_path
+
+
+def _invoke_llm_and_extract_artifact(
+    llm, messages, filename: str, step_name: str, step_number: int
+) -> str:
+    """Invoke the LLM and retry once if artifact extraction fails."""
+    last_error: ValueError | None = None
+    for attempt in range(1, 3):
+        response = llm.invoke(messages)
+        raw_response = response.content
+        _write_llm_call_log(
+            step_number=step_number,
+            attempt=attempt,
+            messages=messages,
+            raw_response=raw_response,
+        )
+        logger.info(
+            "LLM %s response length: %d chars",
+            filename,
+            len(raw_response),
+        )
+        try:
+            return _extract_c_artifact(raw_response, filename)
+        except ValueError as exc:
+            last_error = exc
+            if attempt == 1:
+                logger.warning(
+                    "%s extraction failed: %s. Retrying generation once.",
+                    step_name,
+                    exc,
+                )
+            else:
+                logger.error("%s extraction failed after retry: %s", step_name, exc)
+    raise last_error or ValueError(f"Could not extract {filename}.")
 
 def _generate_deterministic_header(state: AgentState) -> str:
     """
@@ -497,6 +626,14 @@ def _generate_fallback_header(state: AgentState) -> str:
     return "\n".join(lines)
 
 
+def _replace_text_file(path: Path, content: str) -> None:
+    """Atomically replace a generated artifact instead of appending to it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
 def _write_generated_artifacts(
     model_c: str,
     model_h: str,
@@ -514,9 +651,9 @@ def _write_generated_artifacts(
     model_header_path = OUTPUT_DIR / "model.h"
     header_path = OUTPUT_DIR / "weights.h"
 
-    code_path.write_text(model_c, encoding="utf-8")
-    model_header_path.write_text(model_h, encoding="utf-8")
-    header_path.write_text(weights_h, encoding="utf-8")
+    _replace_text_file(code_path, model_c)
+    _replace_text_file(model_header_path, model_h)
+    _replace_text_file(header_path, weights_h)
 
     logger.info(f"Generated code written to: {code_path}")
     logger.info(f"Generated model header written to: {model_header_path}")
@@ -530,7 +667,7 @@ def _write_generated_artifacts(
 
     if loader_c:
         loader_path = OUTPUT_DIR / "weights_loader.c"
-        loader_path.write_text(loader_c, encoding="utf-8")
+        _replace_text_file(loader_path, loader_c)
         logger.info(f"Generated loader written to: {loader_path}")
         paths["loader_path"] = str(loader_path)
 
@@ -553,7 +690,7 @@ def generate_code(state: AgentState) -> dict:
 
     attempt = state.get("verification_attempts", 0)
     opt_iter = state.get("optimization_iteration", 0)
-    is_retry = bool(state.get("verification_feedback", ""))
+    is_retry = _is_repair_mode(state)
     logger.info(
         f"  Verification attempt: {attempt}, "
         f"Optimization iteration: {opt_iter}, "
@@ -591,12 +728,10 @@ def generate_code(state: AgentState) -> dict:
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 2 model.h ...")
     if is_retry:
         logger.info("  → REPAIR MODE: feeding back current code + errors")
-    header_response = llm.invoke(header_messages)
-    raw_header_response = header_response.content
-    logger.info(f"LLM model.h response length: {len(raw_header_response)} chars")
-
     # ── Extract model.h ─────────────────────────────────────────
-    model_h = _extract_c_artifact(raw_header_response, "model.h")
+    model_h = _invoke_llm_and_extract_artifact(
+        llm, header_messages, "model.h", "step 2 model.h", 2
+    )
 
     # Step 3: ask the LLM to implement model.c against the model.h contract.
     c_messages = [
@@ -605,12 +740,10 @@ def generate_code(state: AgentState) -> dict:
     ]
 
     logger.info(f"Calling LLM ({VLLM_MODEL}) for step 3 model.c ...")
-    c_response = llm.invoke(c_messages)
-    raw_c_response = c_response.content
-    logger.info(f"LLM model.c response length: {len(raw_c_response)} chars")
-
     # ── Extract model.c ─────────────────────────────────────────
-    model_c = _extract_c_artifact(raw_c_response, "model.c")
+    model_c = _invoke_llm_and_extract_artifact(
+        llm, c_messages, "model.c", "step 3 model.c", 3
+    )
 
     # ── Write files ─────────────────────────────────────────────
     artifact_paths = _write_generated_artifacts(
