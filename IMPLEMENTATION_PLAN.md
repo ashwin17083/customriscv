@@ -28,6 +28,34 @@ graph TD
 
 ---
 
+flowchart TD
+
+```
+A[PyTorch Model] --> B[Torch FX Trace]
+B --> C[FX Parser]
+C --> D[Custom Hardware-Aware IR]
+
+D --> E[Code Generation Agent]
+E --> F[Verification Agent]
+
+F -->|Compilation / Static Check Failed| E
+
+F -->|Verification Passed| G[Human Review]
+
+G -->|Approved| H[Optimization Agent]
+
+H --> I[Simulation Agent]
+
+I -->|Output Mismatch vs PyTorch| E
+
+I -->|Simulation Passed| J[Synthesis Agent]
+
+J --> K[Report Agent]
+
+K --> L[Deployable RISC-V Artifacts]
+```
+
+
 ## User Review Required
 
 > [!IMPORTANT]
