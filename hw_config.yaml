@@ -1,0 +1,104 @@
+# =============================================================
+# Hardware Configuration Template for HW-Aware Optimizer
+# =============================================================
+# Fill in the sections that apply to your target hardware.
+# Set enabled: false or leave a section empty to skip it.
+# The optimizer will only use sections that are enabled/populated.
+# =============================================================
+
+target:
+  isa: rv32imac          # Base ISA: rv32imac, rv32imc, rv32gc, etc.
+  description: "Single-core RISC-V with systolic array accelerator and VPU"
+
+# ── Custom Instructions ──────────────────────────────────────────────────────
+# Define each custom instruction / hardware intrinsic available on your chip.
+# The optimizer will replace standard C loops with these calls.
+# 'applies_to' lists the operation types this replaces:
+#   matmul / linear / gemm / conv2d / relu / silu / add / mul / softmax
+custom_instructions:
+  - name: systolic_execute
+    enabled: true
+    description: "Execute matrix-multiply using on-chip systolic array"
+    # Full C inline function definition — copied verbatim into model_optimized.h
+    header_definition: |
+      static inline void systolic_execute(float *A_ptr, float *B_ptr) {
+          /* Systolic array custom instruction — .insn r encoding */
+          asm volatile(
+              ".insn r 0x08,0x0,0x13,%0,%1,%2"
+              :
+              : "r"(0), "r"(A_ptr), "r"(B_ptr)
+              : "memory"
+          );
+      }
+    applies_to: ["matmul", "linear", "gemm"]
+    # Tile dimensions of the systolic array (rows x cols).
+    # The optimizer tiles loops to match this before calling the intrinsic.
+    tile_size: [8, 8]
+    # Example call shown to the LLM for context
+    usage_example: "systolic_execute(&W[row * K], &A[col * K]);"
+
+  - name: vpu_base_ab
+    enabled: true
+    description: "Vector Processing Unit: element-wise op on two float arrays"
+    header_definition: |
+      static inline void vpu_base_ab(float *a, float *b) {
+          /* VPU custom instruction — .insn r encoding */
+          asm volatile(
+              ".insn r 0x0C,0x0,0x00,%0,%1,%2"
+              :
+              : "r"(0), "r"(a), "r"(b)
+              : "memory"
+          );
+      }
+    applies_to: ["relu", "silu", "add", "mul"]
+    usage_example: "vpu_base_ab(&activation[i], &bias[i]);"
+
+  # Add more custom instructions below as needed:
+  # - name: my_custom_op
+  #   enabled: false
+  #   description: "..."
+  #   header_definition: |
+  #     static inline void my_custom_op(...) { ... }
+  #   applies_to: [...]
+  #   usage_example: "..."
+
+# ── Multi-Core / Multi-Accelerator Distribution ──────────────────────────────
+# Set enabled: true if your target has multiple cores or systolic arrays.
+# The optimizer will distribute the model's workload across them.
+multi_core:
+  enabled: false
+  num_cores: 1
+  num_systolic_arrays: 1
+  # Distribution strategy:
+  #   "attention_heads" — split transformer attention heads across arrays (TPU-style)
+  #   "layers"          — pipeline different model layers across separate cores
+  #   "none"            — no distribution
+  distribution_strategy: "attention_heads"
+  # Fence/sync instruction inserted between distributed compute blocks
+  sync_instruction: |
+    asm volatile("fence" ::: "memory");
+  # Optional: DMA / cross-core send-receive instructions
+  send_instruction: ""   # e.g. "dma_push(&src[0], dest_core_id, size);"
+  recv_instruction: ""   # e.g. "dma_pull(&dst[0], src_core_id, size);"
+
+# ── Vector Extension ──────────────────────────────────────────────────────────
+# Enable if your RISC-V target supports a standard vector/SIMD extension.
+vector_extension:
+  enabled: false
+  # Supported: "Zve32f" (embedded FP vector), "V" (RVV 1.0), "P" (RISC-V DSP P-ext)
+  extension: "Zve32f"
+  vlen: 128              # Vector register length in bits (e.g. 128, 256, 512)
+  # If enabled, scalar inner loops in matmul/conv are replaced with
+  # vector load-compute-store sequences using this extension.
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+notes: |
+  - This file is loaded automatically when --optimize is passed to main.py
+  - Sections with enabled: false are ignored by the optimizer
+  - The 'header_definition' block is copied VERBATIM into model_optimized.h
+    so the LLM does not have to know the inline asm details
+  - tile_size should match your physical systolic array dimensions
+  - For attention head distribution, num_systolic_arrays should divide
+    evenly into the number of attention heads in the model
+  - All custom instructions must preserve the mathematical semantics
+    of the operations they replace

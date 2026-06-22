@@ -20,6 +20,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+class CompilerUnavailableError(Exception):
+    """Raised when no RISC-V compiler is found and the operation cannot proceed."""
+    pass
+
+
 # ── Compiler search order ───────────────────────────────────────
 RISCV_COMPILERS = [
     "riscv32-unknown-elf-gcc",

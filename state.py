@@ -155,3 +155,28 @@ class AgentState(TypedDict, total=False):
     total_output_tokens: int                 # Running total output tokens
     total_llm_latency_s: float               # Running total GPU/LLM wall-clock seconds
     agent_latencies: dict[str, float]        # agent_name → total wall-clock seconds
+
+    # ── HW-Aware Optimizer Output ────────────────────────────────
+    optimized_code: str                      # model_optimized.c content
+    optimized_header: str                    # model_optimized.h content
+    optimized_code_path: str                 # Path to output/model_optimized.c
+    optimized_header_path: str               # Path to output/model_optimized.h
+    hw_config: dict                          # Loaded hw_config.yaml content
+
+    # ── Optimized Code Verification (#2) ────────────────────────
+    opt_verification_result: VerificationResult
+    opt_verification_attempts: int           # Counter (max 3)
+    opt_verification_feedback: str           # Formatted feedback for optimizer LLM
+    opt_verification_exhausted: bool         # True if max attempts reached
+
+    # ── Human Review #2 (after HW optimization) ─────────────────
+    human2_approved: bool
+    human2_feedback: str
+    human2_action: str                       # 'approve', 'retry', 'quit'
+
+    # ── Compiler Exception Handling ──────────────────────────────
+    compiler_unavailable: bool               # True when no RISC-V compiler found
+    compiler_decision_action: str            # 'proceed' or 'skip'
+
+    # ── Pipeline Control ─────────────────────────────────────────
+    skip_to_report: bool                     # True when user skips sim+synth

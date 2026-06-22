@@ -1,8 +1,9 @@
 """
 Code Generator Agent — Converts Custom IR → RISC-V C code.
 
-Uses Qwen2.5-Coder-32B via local vLLM server (OpenAI-compatible API)
-to generate model.h/model.c from the IR graph.
+Supports two LLM backends (selected via LLM_BACKEND env var):
+  - 'vllm'  (default): Qwen2.5-Coder-32B via local vLLM OpenAI-compatible API
+  - 'ollama': Any Ollama-served model (default: deepseek-coder-v2:16b-lite-instruct-q4_K_M)
 
 weights.h is generated deterministically (not by the LLM) using
 the export_weights utility. The LLM then produces a model.h contract
@@ -41,6 +42,36 @@ VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "dummy")  # vLLM doesn't need real key
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
 VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "200000"))
+
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL",    "deepseek-coder-v2:16b-lite-instruct-q4_K_M")
+
+
+def _build_llm(temperature: float = 0.2):
+    """
+    Build the LLM client based on LLM_BACKEND environment variable.
+
+    LLM_BACKEND=vllm   (default) → ChatOpenAI pointing at local vLLM server
+    LLM_BACKEND=ollama            → ChatOllama pointing at local Ollama instance
+    """
+    backend = os.environ.get("LLM_BACKEND", "vllm").lower()
+    if backend == "ollama":
+        from langchain_ollama import ChatOllama
+        logger.info(f"LLM backend: Ollama ({OLLAMA_MODEL} @ {OLLAMA_BASE_URL})")
+        return ChatOllama(
+            base_url=OLLAMA_BASE_URL,
+            model=OLLAMA_MODEL,
+            temperature=temperature,
+        )
+    # Default: vLLM (OpenAI-compatible)
+    logger.info(f"LLM backend: vLLM ({VLLM_MODEL} @ {VLLM_BASE_URL})")
+    return ChatOpenAI(
+        base_url=VLLM_BASE_URL,
+        api_key=VLLM_API_KEY,
+        model=VLLM_MODEL,
+        temperature=temperature,
+        max_tokens=LLM_MAX_TOKENS,
+    )
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "codegen.txt"
 OUTPUT_DIR = Path(__file__).parent.parent / "output"
@@ -579,14 +610,8 @@ def generate_code(state: AgentState) -> dict:
     # ── Build LLM messages ──────────────────────────────────────
     system_prompt = _load_system_prompt()
 
-    # ── Call vLLM ───────────────────────────────────────────────
-    llm = ChatOpenAI(
-        base_url=VLLM_BASE_URL,
-        api_key=VLLM_API_KEY,
-        model=VLLM_MODEL,
-        temperature=0.2 if not is_retry else 0.0,  # Lower temp on retries
-        max_tokens=LLM_MAX_TOKENS,
-    )
+    # ── Build LLM client (vLLM or Ollama based on LLM_BACKEND env) ─
+    llm = _build_llm(temperature=0.2 if not is_retry else 0.0)
 
     # Step 2: ask the LLM for model.h, which defines includes, tensor
     # contracts, dependencies, and all function stubs to be implemented.

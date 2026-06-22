@@ -13,18 +13,38 @@ graph TD
     A["PyTorch Model"] --> B["FX Trace"]
     B --> C["FX Parser Agent"]
     C --> D["Custom IR"]
-    D --> E["Code Generator Agent<br/>(Qwen2.5-Coder-32B)"]
-    E --> F["Verification Agent"]
-    F -->|Fail: Current Code + Errors| G["Feedback → Code Generator"]
-    G --> E
-    F -->|Pass| H["Human Approval"]
-    H -->|Reject| E
-    H -->|Approve| I["Hazard3 Simulation Agent"]
-    I --> J["OpenROAD Synthesis Agent"]
-    J --> K["Optimization Agent"]
-    K -->|Re-optimize| E
-    K -->|Done| L["Report Agent"]
+    D --> E["Code Generator Agent<br/>(Qwen/Ollama — LLM_BACKEND)"]
+    E --> F["Verification Agent #1<br/>(Syntax + Structural)"]
+    F -->|"Fail: Code + Errors"| E
+    F -->|"Pass"| H["Human Approval #1<br/>(interrupt — feedback → REPAIR MODE)"]
+    H -->|"Reject + Feedback + Current Code"| E
+    H -->|"Approve (no --optimize)"| SIM
+    H -->|"Approve (--optimize)"| OPT
+    OPT["HW-Aware Optimizer Agent<br/>(hw_config.yaml + Qwen/Ollama)<br/>→ model_optimized.h + model_optimized.c"] --> V2
+    V2["Verification Agent #2<br/>(Syntax + Structural + Python Output Check)"]
+    V2 -->|"Fail (≤3 attempts)"| OPT
+    V2 -->|"Pass OR Exhausted"| H2["Human Approval #2<br/>(interrupt)"]
+    V2 -->|"No RISC-V Compiler"| CD["Compiler Decision<br/>(interrupt)"]
+    H2 -->|"Reject + Feedback"| OPT
+    H2 -->|"Approve"| SIM
+    CD -->|"Proceed (mock sim)"| SIM
+    CD -->|"Skip"| REP
+    SIM["Hazard3 Simulation Agent"]
+    SIM -->|"Output Match"| SYNTH["OpenROAD Synthesis Agent"]
+    SIM -->|"Mismatch"| E
+    SYNTH --> REP["Report Agent"]
+    REP --> END["END"]
 ```
+
+**LLM Backend selection** (env var):
+- `LLM_BACKEND=vllm` (default) — Qwen2.5-Coder-32B via local vLLM
+- `LLM_BACKEND=ollama` — deepseek-coder-v2:16b-lite-instruct-q4_K_M via local Ollama
+
+**Key changes from previous version:**
+- `agents/optimizer.py` (hints-only) → **deleted**, replaced by `agents/hw_optimizer.py`
+- Human feedback now correctly enters REPAIR MODE in code generator
+- Full interrupt loop in `main.py` — simulation+synthesis always run after approval
+- `hw_config.yaml` template in project root — user fills in custom instructions
 
 ---
 

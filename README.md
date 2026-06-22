@@ -19,19 +19,35 @@ A multi-agent LangGraph system that converts PyTorch models into optimized bare-
    pip install -r requirements.txt
    ```
 
-2. Set LLM environment variables (defaults to local vLLM endpoint):
+2. Set LLM environment variables based on your chosen backend:
+
+   **For local vLLM endpoint (default):**
    ```bash
+   export LLM_BACKEND="vllm"
    export VLLM_BASE_URL="http://localhost:8000/v1"
    export VLLM_API_KEY="your_api_key"
    export VLLM_MODEL="Qwen/Qwen2.5-Coder-32B-Instruct"
+   ```
+
+   **For Ollama endpoint:**
+   ```bash
+   export LLM_BACKEND="ollama"
+   export OLLAMA_BASE_URL="http://localhost:11434"
+   export OLLAMA_MODEL="deepseek-coder-v2:16b-lite-instruct-q4_K_M"
    ```
 
 ## Usage
 
 ### Run the Demo (TinyLlama scaled-down)
 ```bash
+python main.py --demo
+```
+
+### Run the Demo with Hardware-Aware Optimization
+```bash
 python main.py --demo --optimize
 ```
+When running with `--optimize`, the pipeline loads `hw_config.yaml` from the root directory. This config details available custom instructions (e.g. systolic array matrix multipliers, vector processing units), multi-core distribution strategies, and vector extension widths. The system will invoke a hardware-aware optimization agent to rewrite the generated C code into optimized versions (`model_optimized.c` / `model_optimized.h`) using these hardware primitives.
 
 ### Visualizing the IR Graph
 The tool generates a Custom IR from your PyTorch model. You can visualize it in various formats:
@@ -53,12 +69,13 @@ python visualize_ir.py output/ir_graph.json --format html --output output/ir_gra
 
 ## Pipeline Workflow
 
-1. `parse_fx_graph`: No-LLM parsing of `torch.fx` to Custom IR.
-2. `generate_code`: deterministically writes `weights.h`, asks the LLM for
-   a `model.h` contract, then asks the LLM to implement `model.c`.
-3. `verify_code`: Compilation checks (loops back to generation if failed).
-4. **Human Review**: System pauses. User approves or rejects.
-5. `simulate`: Run binary on Hazard3.
-6. `synthesize`: Run OpenROAD for area/power.
-7. `optimize`: (Optional) Analyze metrics and loop back to generation.
-8. `report`: Generate `report.md`.
+1. `parse_fx_graph`: Extracts the `torch.fx` GraphModule to a Custom hardware-friendly IR.
+2. `generate_code`: Deterministically exports weights, generates a `model.h` contract, and prompts the LLM to implement `model.c`.
+3. `verify_code` (Verifier #1): Performs cross-compiler syntax checks (auto-retries up to 5 times on failures).
+4. **Human Review #1**: Pipeline pauses to let the user inspect and approve the original C code.
+5. `hw_optimize` (Optional, when `--optimize` is enabled): Rewrites code targeting primitives in `hw_config.yaml`.
+6. `verify_optimized` (Verifier #2): Verifies the optimized code's syntax and functional correctness.
+7. **Human Review #2 / Compiler Decision**: Pauses to approve the hardware-optimized code or decide how to proceed if cross-compilers are missing.
+8. `simulate`: Compiles and runs model inference on Hazard3 (or runs mock simulation).
+9. `synthesize`: Generates layout gate count, power, and area metrics with OpenROAD.
+10. `report`: Generates the final telemetry and performance report.
